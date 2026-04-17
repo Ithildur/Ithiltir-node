@@ -1,5 +1,7 @@
 # Ithiltir-node
 
+[English](README.md)
+
 节点指标采集器，只有两种模式：
 
 - `serve`：暴露 `GET /metrics`
@@ -90,3 +92,7 @@ internal/server  HTTP 处理器
 scripts/         构建脚本
 build/           生成产物
 ```
+
+## 许可证
+
+Ithiltir-node 使用 GNU Affero General Public License v3.0 only 授权。详见 [LICENSE](LICENSE)。

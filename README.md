@@ -1,5 +1,7 @@
 # Ithiltir-node
 
+[中文](README_CN.md)
+
 Node metrics agent with two modes:
 
 - `serve`: expose `GET /metrics`
@@ -90,3 +92,7 @@ internal/server  HTTP handlers
 scripts/         build scripts
 build/           generated artifacts
 ```
+
+## License
+
+Ithiltir-node is licensed under the GNU Affero General Public License v3.0 only. See [LICENSE](LICENSE).
