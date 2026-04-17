@@ -1,0 +1,31 @@
+# Binaries
+bin/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build artifacts
+build/
+coverage/
+*.out
+release/
+build.md
+
+# IDE/editor
+.vscode/
+.idea/
+.DS_Store
+.codex/
+AGENTS.*
+.codex
+
+# Config overrides
+config.local.yaml
+.env
+.env.*
+
+# Test demo
+cmd/disk-demo*
+disk-remake
