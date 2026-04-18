@@ -17,8 +17,11 @@ func collectMDRaid() []raidArraySnapshot {
 	if err != nil {
 		return nil
 	}
+	return parseMDStat(string(data))
+}
 
-	lines := strings.Split(string(data), "\n")
+func parseMDStat(s string) []raidArraySnapshot {
+	lines := strings.Split(s, "\n")
 	arrays := make([]raidArraySnapshot, 0)
 
 	members := func(fields []string) []string {
@@ -102,23 +105,12 @@ func collectMDRaid() []raidArraySnapshot {
 			continue
 		}
 
-		fields := strings.Fields(line)
-		if len(fields) < 4 {
+		array, memberFields, ok := parseMDLine(line)
+		if !ok {
 			continue
 		}
 
-		name := fields[0]
-		if strings.HasSuffix(name, ":") {
-			name = strings.TrimSuffix(name, ":")
-		}
-
-		array := raidArraySnapshot{
-			Name:   name,
-			Status: fields[2],
-			Level:  fields[3],
-		}
-
-		memberNames := members(fields[4:])
+		memberNames := members(memberFields)
 		states, next := details(i+1, &array)
 		i = next
 
@@ -156,18 +148,55 @@ func collectMDRaid() []raidArraySnapshot {
 				array.Health = "healthy"
 			}
 		}
-		if strings.Contains(array.SyncStatus, "resync") ||
-			strings.Contains(array.SyncStatus, "recovery") ||
-			strings.Contains(array.SyncStatus, "reshape") {
-			array.Health = "syncing"
-		}
-
 		if array.Devices > 0 || len(memberNames) > 0 {
 			arrays = append(arrays, array)
 		}
 	}
 
 	return arrays
+}
+
+func parseMDLine(line string) (raidArraySnapshot, []string, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return raidArraySnapshot{}, nil, false
+	}
+
+	name := strings.TrimSuffix(fields[0], ":")
+	if !strings.HasPrefix(name, "md") {
+		return raidArraySnapshot{}, nil, false
+	}
+
+	i := 1
+	if !strings.HasSuffix(fields[0], ":") {
+		if fields[i] != ":" {
+			return raidArraySnapshot{}, nil, false
+		}
+		i++
+	}
+	if i >= len(fields) {
+		return raidArraySnapshot{}, nil, false
+	}
+
+	array := raidArraySnapshot{Name: name, Status: fields[i]}
+	i++
+	for i < len(fields) {
+		if mdLevel(fields[i]) {
+			array.Level = fields[i]
+			i++
+			break
+		}
+		if strings.Contains(fields[i], "[") {
+			break
+		}
+		i++
+	}
+	return array, fields[i:], true
+}
+
+func mdLevel(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return strings.HasPrefix(s, "raid") || s == "linear" || s == "multipath"
 }
 
 func collectZFSRaid(debug bool) []raidArraySnapshot {
@@ -216,7 +245,7 @@ func parseZFSStatus(s string) []raidArraySnapshot {
 		switch strings.ToUpper(state) {
 		case "ONLINE":
 			return "healthy"
-		case "DEGRADED":
+		case "DEGRADED", "FAULTED", "UNAVAIL", "OFFLINE", "REMOVED", "SUSPENDED":
 			return "degraded"
 		default:
 			return "unknown"
