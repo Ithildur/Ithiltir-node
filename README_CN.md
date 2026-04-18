@@ -53,6 +53,7 @@ x.y.z.a[-<suffix><n>]
 - `<suffix>`：可选；存在时为单个希腊字母，或 `alpha|beta|gamma|delta|epsilon|rc`
 - `<n>`：跟在 `<suffix>` 后的可选数字
 - 发布 Git tag 示例：`1.2.3.4-alpha1`
+- CI 会把纯 `x.y.z.a` tag 发布为普通 GitHub Release，把带后缀的 tag（如 `1.2.3.4-alpha1` 或 `1.2.3.4-α1`）发布为 GitHub pre-release。
 
 Linux/macOS：
 

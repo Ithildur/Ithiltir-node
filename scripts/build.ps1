@@ -6,6 +6,11 @@
 
 $ErrorActionPreference = "Stop"
 
+function Test-PrereleaseVersion {
+  param([string]$Version)
+  return $Version.Contains("-")
+}
+
 function Get-GitTag {
   if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME) {
     return $env:GITHUB_REF_NAME.Trim()
@@ -34,6 +39,17 @@ if ($Release -and -not $UseGitTag) {
   throw "发布模式必须使用 -UseGitTag"
 }
 
+if ($Release) {
+  $dirty = @(& git status --porcelain)
+  if ($dirty.Count -ne 0) {
+    Write-Error ($dirty -join [Environment]::NewLine)
+    throw "发布模式要求干净工作区"
+  }
+  if ((Test-PrereleaseVersion $Version) -and -not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    throw "GitHub CLI not found; cannot mark release as pre-release"
+  }
+}
+
 $validation = (& go run .\cmd\versioncheck --version $Version 2>&1)
 if ($LASTEXITCODE -ne 0) {
   throw (($validation | Out-String).Trim())
@@ -51,11 +67,18 @@ if (-not (Get-Command goreleaser -ErrorAction SilentlyContinue)) {
 }
 
 if ($Release) {
-  & goreleaser release --clean
+  & goreleaser release --clean --skip=validate
 } else {
   & goreleaser build --snapshot --clean
 }
 
 if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE
+}
+
+if ($Release -and (Test-PrereleaseVersion $Version)) {
+  & gh release edit $Version --prerelease --latest=false
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
 }

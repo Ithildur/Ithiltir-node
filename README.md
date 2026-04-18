@@ -53,6 +53,7 @@ x.y.z.a[-<suffix><n>]
 - `<suffix>`: optional; when present, one Greek letter or `alpha|beta|gamma|delta|epsilon|rc`
 - `<n>`: optional digits after `<suffix>`
 - Release Git tag example: `1.2.3.4-alpha1`
+- CI publishes plain `x.y.z.a` tags as normal GitHub Releases, and tags with a suffix such as `1.2.3.4-alpha1` or `1.2.3.4-α1` as GitHub pre-releases.
 
 Linux/macOS:
 
