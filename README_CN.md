@@ -46,19 +46,18 @@
 版本格式：
 
 ```text
-x.y.z.a[-<suffix><n>]
+MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]
 ```
 
-- `x/y/z/a`：非负整数
-- `<suffix>`：可选；存在时为单个希腊字母，或 `alpha|beta|gamma|delta|epsilon|rc`
-- `<n>`：跟在 `<suffix>` 后的可选数字
-- 发布 Git tag 示例：`1.2.3.4-alpha1`
-- CI 会把纯 `x.y.z.a` tag 发布为普通 GitHub Release，把带后缀的 tag（如 `1.2.3.4-alpha1` 或 `1.2.3.4-α1`）发布为 GitHub pre-release。
+- 严格 SemVer，不使用 `v` 前缀。
+- 普通发布 Git tag 示例：`1.2.3`
+- 预发布 Git tag 示例：`1.2.3-rc.1`
+- CI 会把普通 SemVer tag 发布为普通 GitHub Release，把 `1.2.3-alpha.1` 这类预发布 tag 发布为 GitHub pre-release。
 
 Linux/macOS：
 
 ```bash
-./scripts/build.sh --version 1.2.3.4-alpha1
+./scripts/build.sh --version 1.2.3-alpha.1
 ./scripts/build.sh --use-git-tag
 ./scripts/build.sh --use-git-tag --release
 ```
@@ -66,7 +65,7 @@ Linux/macOS：
 Windows：
 
 ```powershell
-.\scripts\build.ps1 -Version 1.2.3.4-alpha1
+.\scripts\build.ps1 -Version 1.2.3-alpha.1
 .\scripts\build.ps1 -UseGitTag
 .\scripts\build.ps1 -UseGitTag -Release
 ```

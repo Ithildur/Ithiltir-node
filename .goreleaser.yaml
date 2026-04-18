@@ -4,6 +4,8 @@ project_name: Ithiltir-node
 
 release:
   name_template: '{{ .Tag }}'
+  prerelease: auto
+  make_latest: '{{ if .Prerelease }}false{{ else }}true{{ end }}'
 
 checksum:
   name_template: 'Ithiltir-node-checksums.txt'

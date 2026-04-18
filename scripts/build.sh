@@ -6,10 +6,6 @@ use_git_tag="false"
 release_mode="false"
 goreleaser_version="v2.15.2"
 
-is_prerelease_version() {
-  [[ "$1" == *-* ]]
-}
-
 get_git_tag() {
   if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
     printf '%s\n' "$GITHUB_REF_NAME"
@@ -78,14 +74,6 @@ if [[ "$release_mode" == "true" ]]; then
     printf '%s\n' "$dirty" >&2
     exit 1
   fi
-  if is_prerelease_version "$version" && ! command -v gh >/dev/null 2>&1; then
-    echo "GitHub CLI not found; cannot mark release as pre-release" >&2
-    exit 1
-  fi
-fi
-
-if ! go run ./cmd/versioncheck --version "$version"; then
-  exit 1
 fi
 
 export GOFLAGS="-trimpath"
@@ -99,10 +87,7 @@ if ! command -v goreleaser >/dev/null 2>&1; then
 fi
 
 if [[ "$release_mode" == "true" ]]; then
-  goreleaser release --clean --skip=validate
-  if is_prerelease_version "$version"; then
-    gh release edit "$version" --prerelease --latest=false
-  fi
+  goreleaser release --clean
 else
   goreleaser build --snapshot --clean
 fi

@@ -45,7 +45,7 @@ jobs:
             tools/go.sum
 
       - name: Build snapshot packages
-        run: ./scripts/build.sh --version 0.0.0.0-alpha1
+        run: ./scripts/build.sh --version 0.0.0-alpha.1
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

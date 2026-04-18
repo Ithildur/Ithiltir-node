@@ -46,19 +46,18 @@ Build config lives in [`.goreleaser.yaml`](.goreleaser.yaml).
 Version format:
 
 ```text
-x.y.z.a[-<suffix><n>]
+MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]
 ```
 
-- `x/y/z/a`: non-negative integers
-- `<suffix>`: optional; when present, one Greek letter or `alpha|beta|gamma|delta|epsilon|rc`
-- `<n>`: optional digits after `<suffix>`
-- Release Git tag example: `1.2.3.4-alpha1`
-- CI publishes plain `x.y.z.a` tags as normal GitHub Releases, and tags with a suffix such as `1.2.3.4-alpha1` or `1.2.3.4-α1` as GitHub pre-releases.
+- Strict SemVer, without a `v` prefix.
+- Release Git tag example: `1.2.3`
+- Pre-release Git tag example: `1.2.3-rc.1`
+- CI publishes plain SemVer tags as normal GitHub Releases, and pre-release tags such as `1.2.3-alpha.1` as GitHub pre-releases.
 
 Linux/macOS:
 
 ```bash
-./scripts/build.sh --version 1.2.3.4-alpha1
+./scripts/build.sh --version 1.2.3-alpha.1
 ./scripts/build.sh --use-git-tag
 ./scripts/build.sh --use-git-tag --release
 ```
@@ -66,7 +65,7 @@ Linux/macOS:
 Windows:
 
 ```powershell
-.\scripts\build.ps1 -Version 1.2.3.4-alpha1
+.\scripts\build.ps1 -Version 1.2.3-alpha.1
 .\scripts\build.ps1 -UseGitTag
 .\scripts\build.ps1 -UseGitTag -Release
 ```
