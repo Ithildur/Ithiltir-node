@@ -22,12 +22,23 @@ function Get-GitTag {
   return $tags[0].Trim()
 }
 
+function Test-SemVer {
+  param([string]$Value)
+
+  $pattern = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-((0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+  return $Value -match $pattern
+}
+
 if ($UseGitTag) {
   $Version = Get-GitTag
 }
 
 if (-not $Version) {
   throw "缺少版本号。使用 --version 或 --use-git-tag"
+}
+
+if (-not (Test-SemVer $Version)) {
+  throw "版本号必须是严格 SemVer，且不能带 v 前缀: $Version。正式发布: x.x.x 或 x.x.x+build；预发布: x.x.x-prerelease 或 x.x.x-prerelease+build"
 }
 
 if ($Release -and -not $UseGitTag) {

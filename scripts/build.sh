@@ -5,6 +5,16 @@ version=""
 use_git_tag="false"
 release_mode="false"
 goreleaser_version="v2.15.2"
+semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+
+validate_version() {
+  local v="$1"
+  if [[ ! "$v" =~ $semver_re ]]; then
+    echo "版本号必须是严格 SemVer，且不能带 v 前缀: ${v}" >&2
+    echo "正式发布: x.x.x 或 x.x.x+build；预发布: x.x.x-prerelease 或 x.x.x-prerelease+build" >&2
+    return 1
+  fi
+}
 
 get_git_tag() {
   if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
@@ -59,6 +69,10 @@ fi
 
 if [[ -z "$version" ]]; then
   echo "缺少版本号。使用 --version 或 --use-git-tag" >&2
+  exit 1
+fi
+
+if ! validate_version "$version"; then
   exit 1
 fi
 

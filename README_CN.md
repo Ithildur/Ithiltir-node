@@ -50,9 +50,9 @@ MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]
 ```
 
 - 严格 SemVer，不使用 `v` 前缀。
-- 普通发布 Git tag 示例：`1.2.3`
-- 预发布 Git tag 示例：`1.2.3-rc.1`
-- CI 会把普通 SemVer tag 发布为普通 GitHub Release，把 `1.2.3-alpha.1` 这类预发布 tag 发布为 GitHub pre-release。
+- 只有 `x.x.x` 或 `x.x.x+build` 是普通发布。
+- 任何带预发布段的版本，如 `x.x.x-rc.1` 或 `x.x.x-rc.1+build`，都是 GitHub pre-release。
+- CI 会在发布前拒绝非法 SemVer tag。
 
 Linux/macOS：
 

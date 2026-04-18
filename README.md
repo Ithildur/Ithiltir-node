@@ -50,9 +50,9 @@ MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]
 ```
 
 - Strict SemVer, without a `v` prefix.
-- Release Git tag example: `1.2.3`
-- Pre-release Git tag example: `1.2.3-rc.1`
-- CI publishes plain SemVer tags as normal GitHub Releases, and pre-release tags such as `1.2.3-alpha.1` as GitHub pre-releases.
+- Normal releases are only `x.x.x` or `x.x.x+build`.
+- Any version with a pre-release part such as `x.x.x-rc.1` or `x.x.x-rc.1+build` is a GitHub pre-release.
+- CI rejects invalid SemVer tags before publishing.
 
 Linux/macOS:
 
