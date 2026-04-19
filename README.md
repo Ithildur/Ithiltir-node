@@ -70,7 +70,20 @@ Windows:
 .\scripts\build.ps1 -UseGitTag -Release
 ```
 
-- Output directory: `build/`
+- Output directory:
+
+```text
+build/
+  linux/
+    node_linux_amd64
+    node_linux_arm64
+  macos/
+    node_macos_arm64
+  windows/
+    node_windows_amd64.exe
+    node_windows_arm64.exe
+```
+
 - GitHub Release title is the version tag. Assets are plain binaries named `Ithiltir-node-<os>-<arch>`; Windows keeps `.exe`, and checksums are uploaded separately
 - The scripts install GoReleaser `v2.15.2` if it is missing
 

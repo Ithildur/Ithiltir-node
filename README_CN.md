@@ -70,7 +70,20 @@ Windows：
 .\scripts\build.ps1 -UseGitTag -Release
 ```
 
-- 输出目录：`build/`
+- 输出目录：
+
+```text
+build/
+  linux/
+    node_linux_amd64
+    node_linux_arm64
+  macos/
+    node_macos_arm64
+  windows/
+    node_windows_amd64.exe
+    node_windows_arm64.exe
+```
+
 - GitHub Release 标题是版本 tag。产物是裸二进制，命名为 `Ithiltir-node-<os>-<arch>`；Windows 保留 `.exe`，checksums 单独上传
 - 脚本会在缺失时自动安装 GoReleaser `v2.15.2`
 

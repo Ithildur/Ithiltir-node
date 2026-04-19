@@ -16,6 +16,24 @@ validate_version() {
   fi
 }
 
+package_local_build() {
+  mkdir -p build/linux build/macos build/windows
+
+  mv build/node_linux_amd64_v1/node build/linux/node_linux_amd64
+  mv build/node_linux_arm64_v8.0/node build/linux/node_linux_arm64
+  mv build/node_darwin_arm64_v8.0/node build/macos/node_macos_arm64
+  mv build/node_windows_amd64_v1/node.exe build/windows/node_windows_amd64.exe
+  mv build/node_windows_arm64_v8.0/node.exe build/windows/node_windows_arm64.exe
+
+  rm -rf \
+    build/node_linux_amd64_v1 \
+    build/node_linux_arm64_v8.0 \
+    build/node_darwin_arm64_v8.0 \
+    build/node_windows_amd64_v1 \
+    build/node_windows_arm64_v8.0
+  rm -f build/artifacts.json build/config.yaml build/metadata.json
+}
+
 get_git_tag() {
   if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
     printf '%s\n' "$GITHUB_REF_NAME"
@@ -104,4 +122,7 @@ if [[ "$release_mode" == "true" ]]; then
   goreleaser release --clean
 else
   goreleaser build --snapshot --clean
+  if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+    package_local_build
+  fi
 fi
