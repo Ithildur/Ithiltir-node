@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Ithiltir-node Serve</title>
+  <link rel="stylesheet" href="/serve-assets/page.css">
+  <script>
+    window.ITHILTIR_SERVE = {
+      endpoint: "/metrics",
+      staticEndpoint: "/static",
+      mode: "node-report",
+      pollMs: 5000
+    };
+  </script>
+</head>
+<body>
+  <main>
+    <section class="term-window" aria-live="polite">
+      <header class="term-header">
+        <span class="dot red" aria-hidden="true"></span>
+        <span class="dot yellow" aria-hidden="true"></span>
+        <span class="dot green" aria-hidden="true"></span>
+        <span class="term-title">Ithiltir-node / serve</span>
+      </header>
+
+      <div class="term-body">
+      <p class="cmd-line"><span class="shell-prefix">Ithiltir</span>@<span class="shell-path" data-bind="hostname">--</span>:~# node-info</p>
+      <section class="kv-output">
+        <div><span>cpu</span><b data-bind="cpuModel">--</b></div>
+        <div><span>cores</span><b data-bind="coreCount">--</b></div>
+        <div><span>memory</span><b data-bind="memoryTotal">--</b></div>
+        <div><span>swap</span><b data-bind="swapTotal">--</b></div>
+        <div><span>system</span><b data-bind="platform">--</b></div>
+        <div><span>kernel</span><b data-bind="kernel">--</b></div>
+      </section>
+
+      <p class="cmd-line"><span class="shell-prefix">Ithiltir</span>@<span class="shell-path" data-bind="hostname">--</span>:~# uptime && ss -s</p>
+      <section class="kv-output compact">
+        <div><span>uptime</span><b data-bind="uptime">--</b></div>
+        <div><span>load</span><b data-bind="load">--</b></div>
+        <div><span>processes</span><b data-bind="processes">--</b></div>
+        <div><span>tcp</span><b data-bind="tcp">--</b></div>
+        <div><span>udp</span><b data-bind="udp">--</b></div>
+      </section>
+
+      <p class="cmd-line"><span class="shell-prefix">Ithiltir</span>@<span class="shell-path" data-bind="hostname">--</span>:~# top -bn1 | head</p>
+      <section class="metric-output">
+        <div><span>cpu</span><b data-bind="cpu">--</b><code data-bind="cpuBar">[----------]</code></div>
+        <div><span>memory</span><b data-bind="memory">--</b><code data-bind="memoryBar">[----------]</code></div>
+        <div><span>disk</span><b data-bind="disk">--</b><code data-bind="diskBar">[----------]</code></div>
+      </section>
+
+      <section class="kv-output compact">
+        <div><span>mem_used</span><b data-bind="memoryText">--</b></div>
+        <div><span>buffers</span><b data-bind="buffers">--</b></div>
+        <div><span>cached</span><b data-bind="cached">--</b></div>
+        <div><span>swap_used</span><b data-bind="swapText">--</b></div>
+        <div><span>io_wait</span><b data-bind="wait">--</b></div>
+      </section>
+
+      <p class="cmd-line"><span class="shell-prefix">Ithiltir</span>@<span class="shell-path" data-bind="hostname">--</span>:~# df -h</p>
+      <div class="table-head"><span>mount</span><span>used%</span><span>used / total</span></div>
+      <div class="table" data-list="disks"></div>
+
+      <p class="cmd-line"><span class="shell-prefix">Ithiltir</span>@<span class="shell-path" data-bind="hostname">--</span>:~# iostat -dx</p>
+      <div class="table-head io-head"><span>device</span><span>read/s</span><span>write/s</span><span>iops</span><span>util</span></div>
+      <div class="table" data-list="io"></div>
+
+      <p class="cmd-line"><span class="shell-prefix">Ithiltir</span>@<span class="shell-path" data-bind="hostname">--</span>:~# ip -s link</p>
+      <div class="net-list" data-list="nets"></div>
+
+      <section data-section="raid">
+        <p class="cmd-line"><span class="shell-prefix">Ithiltir</span>@<span class="shell-path" data-bind="hostname">--</span>:~# cat /proc/mdstat</p>
+        <div class="table-head"><span>array</span><span>state</span><span>members</span></div>
+        <div class="table" data-list="raid"></div>
+      </section>
+      </div>
+    </section>
+  </main>
+  <script src="/serve-assets/page.js" defer></script>
+</body>
+</html>
