@@ -1,27 +1,92 @@
 # Reporting API
 
+This document is the wire contract between Ithiltir-node and a dashboard.
+
 Code of record:
 
 - runtime payload: [`internal/metrics/types.go`](../internal/metrics/types.go)
 - static payload: [`internal/metrics/static_types.go`](../internal/metrics/static_types.go)
-- HTTP handlers: [`internal/server/server.go`](../internal/server/server.go)
+- local HTTP handlers: [`internal/server/server.go`](../internal/server/server.go)
 - push client: [`internal/push/push.go`](../internal/push/push.go)
+- report config: [`internal/reportcfg/config.go`](../internal/reportcfg/config.go)
 
-## Endpoints
+## HTTP Surface
 
-| Path | Method | Body | Notes |
-| --- | --- | --- | --- |
-| `/metrics` | `GET` | `NodeReport` | Serve mode. Returns `503` before the first snapshot. |
-| `/api/node/metrics` | `POST` | `NodeReport` | Push target. Header: `X-Node-Secret`. |
-| `/api/node/static` | `POST` | `Static` | Push target for static metadata. |
-| `/api/node/identity` | `POST` | `{}` / `{install_id, created}` | Install-time dashboard identity check. Header: `X-Node-Secret`. |
-| `/` | `GET` | `NodeReport` | Push-mode local endpoint. Returns the last pushed report if available, otherwise the current snapshot. |
+The `/api/node/*` endpoints are dashboard endpoints. Ithiltir-node calls them in Push mode; it does not serve them.
 
-Push starts with HTTPS. It falls back to HTTP unless `--require-https` is set.
-Push targets are configured through `report.yaml`; missing files or empty `targets` start normally and skip reporting.
-Malformed config files fail startup.
-Install scripts call `report install <url> <key>` before writing a target. The command fetches `/api/node/identity`, stores the returned `server_install_id`, treats repeated identical installs as success, and prompts only when the same server identity already points at different local config.
-`report update <id> <key>` only rotates a target key; URL changes go through `report install`.
+| Surface | Path | Method | Payload | Success | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Serve local | `/` | `GET` | HTML | `200` | Built-in single-node page. See [serve_page_api.md](serve_page_api.md). |
+| Serve local | `/serve` | `GET` | HTML | `200` | Alias for `/`. |
+| Serve local | `/metrics` | `GET` | `NodeReport` | `200` | Returns `503` before the first snapshot. |
+| Serve local | `/static` | `GET` | `Static` | `200` | Returns `503` before static data is ready. |
+| Push target | `/api/node/metrics` | `POST` | `NodeReport` | `200` | Requires `X-Node-Secret`. |
+| Push target | `/api/node/static` | `POST` | `Static` | `200` | Requires `X-Node-Secret`. Derived from a `/metrics` target URL. |
+| Push target | `/api/node/identity` | `POST` | `{}` | `200` | Requires `X-Node-Secret`. Returns `{ "install_id": "...", "created": true/false }`. |
+| Push local | `/` | `GET` | `NodeReport` | `200` | Bound to `127.0.0.1:${NODE_PORT:-9100}` in Push mode. Returns the last successfully pushed report when available, otherwise the current snapshot. |
+
+Local `GET` routes also accept `HEAD`. Other methods return `405` with `Allow: GET, HEAD`.
+
+## Wire Conventions
+
+- JSON is UTF-8.
+- Timestamps are UTC RFC3339.
+- Byte and packet counters are raw numeric counters.
+- `*Ratio` fields are `0..1`, not percentages.
+- Arrays are returned as `[]`, not `null`.
+- Optional fields with no value are omitted.
+- Runtime disk and static disk are different payloads. Do not mix them; see [api_disk.md](api_disk.md).
+
+## Push Targets
+
+A report target URL is the dashboard metrics endpoint, usually:
+
+```text
+https://dashboard.example/api/node/metrics
+```
+
+The agent sends the same `NodeReport` to every configured target in a collection round. One failed target does not block the others.
+
+Target URL rules:
+
+- `POST <target URL>` receives runtime metrics.
+- If the target path ends with `/metrics`, static metadata is posted to the sibling `/static` URL.
+- `report install <url> <key>` requires a target URL ending in `/metrics`; it calls the sibling `/identity` URL before writing local config.
+- `report update <id> <key>` only rotates the target key. URL changes go through `report install`.
+
+Transport rules:
+
+- `http` and `https` target URLs are valid.
+- HTTPS targets can fall back to HTTP under the client fallback rules.
+- `--require-https` rejects non-HTTPS targets and disables HTTP fallback.
+
+Response handling:
+
+- `200 OK` is the only successful response for push target requests.
+- Any non-`200` response fails that target for the current round.
+- `/api/node/identity` must return JSON with `install_id`; `created` is optional behavior metadata.
+
+## Report Config
+
+Default config path:
+
+- Linux/macOS: `/var/lib/ithiltir-node/report.yaml`
+- Windows: `%ProgramData%\Ithiltir-node\report.yaml`
+
+Override with `ITHILTIR_NODE_REPORT_CONFIG`.
+
+Missing config files and empty `targets` start normally and skip reporting. Malformed config fails startup.
+
+```yaml
+version: 1
+targets:
+  - id: 1
+    url: https://dashboard.example/api/node/metrics
+    key: node-secret
+    server_install_id: dashboard-install-id
+```
+
+Writes are atomic and keep file mode `0600`.
 
 ## Runtime Payload
 
@@ -32,15 +97,12 @@ Top-level object: `NodeReport`
   "version": "...",
   "hostname": "...",
   "timestamp": "...",
-  "metrics": { ... }
+  "metrics": {}
 }
 ```
 
-- `timestamp`: UTC, RFC3339
+- `timestamp`: UTC RFC3339
 - `metrics`: `Snapshot`
-
-Push sends one `NodeReport` payload per collection round and posts that same payload to every configured target concurrently.
-One failed target does not block other targets.
 
 `Snapshot` fields:
 
@@ -79,19 +141,21 @@ Top-level object: `Static`
   "version": "...",
   "timestamp": "...",
   "report_interval_seconds": 3,
-  "cpu": { ... },
-  "memory": { ... },
-  "disk": { ... },
-  "system": { ... },
-  "raid": { ... }
+  "cpu": {},
+  "memory": {},
+  "disk": {},
+  "system": {},
+  "raid": {}
 }
 ```
 
-- No wrapper object
-- `report_interval_seconds` is required for publish
-- Static payload is posted on startup
-- If static collection is still partial, the agent keeps retrying
-- After a suppressed push failure recovers, the agent sends static data once more
+Static push behavior:
+
+- Static metadata has no outer wrapper object.
+- `report_interval_seconds` is required.
+- Static metadata is posted once on startup.
+- Partial static collection is retried until complete.
+- Static metadata is sent again after a suppressed push failure recovers.
 
 `Static` fields:
 
@@ -107,9 +171,3 @@ Top-level object: `Static`
   - `supported`, `available`, `arrays[]`
   - `arrays[]`: `name`, `level`, `devices`, `members[]`
   - `members[]`: `name`
-
-## Rules
-
-- Arrays are returned as `[]`, not `null`
-- `*Ratio` fields use `0..1`
-- Runtime disk and static disk are different payloads. Do not mix them

@@ -4,7 +4,7 @@
 
 节点指标采集器，只有两种模式：
 
-- `serve`：暴露 `GET /metrics`
+- `serve`：运行本地节点页面
 - `push`：向面板上报，同时保留本地缓存结果
 
 ## 模式
@@ -18,7 +18,10 @@
 
 - 默认监听：`0.0.0.0:9100`
 - 环境变量覆盖：`NODE_HOST`、`NODE_PORT`
-- 接口：`GET /metrics`
+- 页面：`GET /` 或 `GET /serve`
+- 指标接口：`GET /metrics`
+- 静态硬件接口：`GET /static`
+- 页面覆盖：设置 `ITHILTIR_NODE_SERVE_PAGE_DIR`，或把 `servepage/` 放在二进制同级目录；公开资源放在 `servepage/assets/`
 
 ### Push
 
@@ -28,10 +31,10 @@
 
 - Linux/macOS 默认读取 `/var/lib/ithiltir-node/report.yaml`，Windows 默认读取 `%ProgramData%\Ithiltir-node\report.yaml`
 - 可用 `ITHILTIR_NODE_REPORT_CONFIG` 覆盖配置路径
-- 每个 target 使用自己的 URL 和 `X-Node-Secret: <key>`
+- 每个 target URL 指向 dashboard 指标接口，并携带 `X-Node-Secret: <key>`
 - target URL 以 `/metrics` 结尾时，静态元数据会发到同级 `/static` URL
 - 本地接口：`GET http://127.0.0.1:${NODE_PORT:-9100}/`
-- 默认先走 HTTPS。除非加 `--require-https`，否则允许回落 HTTP
+- HTTPS target 默认可回落 HTTP；加 `--require-https` 后禁止回落
 
 上报目标命令：
 
@@ -42,7 +45,7 @@
 ./node report list
 ```
 
-安装脚本使用 `report install`。它会先读取 dashboard 服务端身份，再写入 `report.yaml`；重复执行相同 install 不会改配置，相同 `server_install_id` 但目标不同才会提示选择保留哪一个。
+安装脚本使用 `report install`。URL 必须指向 dashboard 的 `/metrics` 接口。命令会先读取 dashboard 服务端身份，再写入 `report.yaml`；重复执行相同 install 不会改配置，相同 `server_install_id` 但目标不同才会提示选择保留哪一个。
 `report update` 只用于轮换已有 target 的 key；URL 修改必须走 `report install`。
 配置文件包含 `version` 和 `targets`；每个 target 有 `id`、`url`、`key`，以及可选 `server_install_id`。
 写入使用原子 rename，并保持文件权限 `0600`。
@@ -105,6 +108,7 @@ build/
 ## 文档
 
 - 上报接口：[English](docs/reporting_apis.md)，[中文](docs/reporting_apis_CN.md)
+- Serve 页面 API：[English](docs/serve_page_api.md)，[中文](docs/serve_page_api_CN.md)
 - 磁盘结构：[English](docs/api_disk.md)，[中文](docs/api_disk_CN.md)
 
 ## 目录

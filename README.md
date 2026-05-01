@@ -4,7 +4,7 @@
 
 Node metrics agent with two modes:
 
-- `serve`: expose `GET /metrics`
+- `serve`: run the local node page
 - `push`: post reports to a dashboard and keep a local cached report
 
 ## Modes
@@ -18,7 +18,10 @@ Node metrics agent with two modes:
 
 - Default listen: `0.0.0.0:9100`
 - Env override: `NODE_HOST`, `NODE_PORT`
-- Endpoint: `GET /metrics`
+- Page: `GET /` or `GET /serve`
+- Metrics endpoint: `GET /metrics`
+- Static hardware endpoint: `GET /static`
+- Page override: set `ITHILTIR_NODE_SERVE_PAGE_DIR`, or place `servepage/` next to the binary; public assets live under `servepage/assets/`
 
 ### Push
 
@@ -28,11 +31,10 @@ Node metrics agent with two modes:
 
 - Report targets are read from `/var/lib/ithiltir-node/report.yaml` on Linux/macOS and `%ProgramData%\Ithiltir-node\report.yaml` on Windows
 - Override the config path with `ITHILTIR_NODE_REPORT_CONFIG`
-- Each target posts to its own URL with `X-Node-Secret: <key>`
+- Each target URL is the dashboard metrics endpoint and receives `X-Node-Secret: <key>`
 - If a target URL ends with `/metrics`, static metadata is posted to the sibling `/static` URL
-- Header: `X-Node-Secret: <key>`
 - Local endpoint: `GET http://127.0.0.1:${NODE_PORT:-9100}/`
-- HTTPS falls back to HTTP unless `--require-https` is set
+- HTTPS targets can fall back to HTTP unless `--require-https` is set
 
 Report target commands:
 
@@ -43,7 +45,7 @@ Report target commands:
 ./node report list
 ```
 
-Use `report install` from install scripts. It reads the dashboard server identity before writing `report.yaml`; rerunning the same install is a no-op, and a different target with the same `server_install_id` prompts which one to keep.
+Use `report install` from install scripts. The URL must point at the dashboard `/metrics` endpoint. The command reads the dashboard server identity before writing `report.yaml`; rerunning the same install is a no-op, and a different target with the same `server_install_id` prompts which one to keep.
 Use `report update` only to rotate an existing target key; URL changes go through `report install`.
 The config file keeps `version` and `targets`; each target has `id`, `url`, `key`, and optional `server_install_id`.
 Writes are atomic and keep file mode `0600`.
@@ -106,6 +108,7 @@ build/
 ## Docs
 
 - Reporting API: [English](docs/reporting_apis.md), [中文](docs/reporting_apis_CN.md)
+- Serve page API: [English](docs/serve_page_api.md), [中文](docs/serve_page_api_CN.md)
 - Disk schema: [English](docs/api_disk.md), [中文](docs/api_disk_CN.md)
 
 ## Layout
