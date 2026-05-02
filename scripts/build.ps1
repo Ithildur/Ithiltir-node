@@ -37,13 +37,17 @@ function Package-LocalBuild {
   Move-Item -Force "build\node_darwin_arm64_v8.0\node" "build\macos\node_macos_arm64"
   Move-Item -Force "build\node_windows_amd64_v1\node.exe" "build\windows\node_windows_amd64.exe"
   Move-Item -Force "build\node_windows_arm64_v8.0\node.exe" "build\windows\node_windows_arm64.exe"
+  Move-Item -Force "build\runner_windows_amd64_v1\ithiltir-runner.exe" "build\windows\runner_windows_amd64.exe"
+  Move-Item -Force "build\runner_windows_arm64_v8.0\ithiltir-runner.exe" "build\windows\runner_windows_arm64.exe"
 
   Remove-Item -Recurse -Force `
     "build\node_linux_amd64_v1", `
     "build\node_linux_arm64_v8.0", `
     "build\node_darwin_arm64_v8.0", `
     "build\node_windows_amd64_v1", `
-    "build\node_windows_arm64_v8.0"
+    "build\node_windows_arm64_v8.0", `
+    "build\runner_windows_amd64_v1", `
+    "build\runner_windows_arm64_v8.0"
   Remove-Item -Force "build\artifacts.json", "build\config.yaml", "build\metadata.json"
 }
 

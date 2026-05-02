@@ -24,13 +24,17 @@ package_local_build() {
   mv build/node_darwin_arm64_v8.0/node build/macos/node_macos_arm64
   mv build/node_windows_amd64_v1/node.exe build/windows/node_windows_amd64.exe
   mv build/node_windows_arm64_v8.0/node.exe build/windows/node_windows_arm64.exe
+  mv build/runner_windows_amd64_v1/ithiltir-runner.exe build/windows/runner_windows_amd64.exe
+  mv build/runner_windows_arm64_v8.0/ithiltir-runner.exe build/windows/runner_windows_arm64.exe
 
   rm -rf \
     build/node_linux_amd64_v1 \
     build/node_linux_arm64_v8.0 \
     build/node_darwin_arm64_v8.0 \
     build/node_windows_amd64_v1 \
-    build/node_windows_arm64_v8.0
+    build/node_windows_arm64_v8.0 \
+    build/runner_windows_amd64_v1 \
+    build/runner_windows_arm64_v8.0
   rm -f build/artifacts.json build/config.yaml build/metadata.json
 }
 

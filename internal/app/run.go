@@ -21,6 +21,7 @@ import (
 	"Ithiltir-node/internal/metrics"
 	"Ithiltir-node/internal/push"
 	"Ithiltir-node/internal/reportcfg"
+	"Ithiltir-node/internal/selfupdate"
 	"Ithiltir-node/internal/server"
 )
 
@@ -183,6 +184,14 @@ func runPush(args []string, cfg collect.Config, debug bool, requireHTTPS bool) i
 		_ = srv.Close()
 		return exitCodeForSignal(sig)
 	case err := <-errCh:
+		if errors.Is(err, selfupdate.ErrRestart) {
+			cancel()
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = srv.Shutdown(shutdownCtx)
+			shutdownCancel()
+			_ = srv.Close()
+			return 0
+		}
 		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("push error: %v", err)
 			return 1

@@ -63,6 +63,22 @@ target URL 规则：
 响应处理：
 
 - `200 OK` 是 Push 目标请求的唯一成功响应。
+- `/api/node/metrics` 可以返回空 body、纯文本 `ok`，或 JSON。JSON 响应可包含可选的 `update` manifest：
+
+```json
+{
+  "ok": true,
+  "update": {
+    "id": "release-id",
+    "version": "1.2.3",
+    "url": "https://dashboard.example/releases/Ithiltir-node-windows-amd64.exe",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "size": 12345678
+  }
+}
+```
+
+- `update` 存在时，`update.version`、`update.url`、`update.sha256` 和正数字节数 `update.size` 必填。当前只有由 Windows runner 启动的 node 支持自更新暂存；直接启动的 node 会忽略该 manifest。
 - 任何非 `200` 响应都会让该 target 在当前轮失败。
 - `/api/node/identity` 必须返回带 `install_id` 的 JSON；`created` 只是行为元数据。
 

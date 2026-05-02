@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,6 +22,7 @@ import (
 	"Ithiltir-node/internal/metrics"
 	"Ithiltir-node/internal/nodeiface"
 	"Ithiltir-node/internal/reportcfg"
+	"Ithiltir-node/internal/selfupdate"
 )
 
 var staticRetryDelay = 10 * time.Second
@@ -584,19 +586,25 @@ func drainBody(resp *http.Response) {
 	_ = resp.Body.Close()
 }
 
-func (s *delivery) handleResponse(resp *http.Response, target *target, debug bool) (bool, bool) {
+type metricsResponse struct {
+	OK     bool                 `json:"ok"`
+	Update *selfupdate.Manifest `json:"update"`
+}
+
+func (s *delivery) handleResponse(resp *http.Response, target *target, debug bool) (bool, bool, *selfupdate.Manifest) {
 	defer drainBody(resp)
 
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		s.errLimiter.logf("push target %d non-200 status: %s", target.id, resp.Status)
-		return false, false
+		return false, false, nil
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		s.errLimiter.logf("push target %d non-200 status: %s", target.id, resp.Status)
-		return false, false
+		return false, false, nil
 	}
 
+	manifest := decodeMetricsResponse(resp)
 	recoverStatic := s.connRefusedSuppressed
 	if s.connRefusedSuppressed {
 		log.Printf("push target %d recovered: 对端已恢复", target.id)
@@ -606,7 +614,33 @@ func (s *delivery) handleResponse(resp *http.Response, target *target, debug boo
 	if debug {
 		log.Printf("push target %d ok: %s", target.id, resp.Status)
 	}
-	return true, recoverStatic
+	return true, recoverStatic, manifest
+}
+
+func decodeMetricsResponse(resp *http.Response) *selfupdate.Manifest {
+	if resp == nil || resp.Body == nil {
+		return nil
+	}
+	contentType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil || !strings.EqualFold(contentType, "application/json") {
+		return nil
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		log.Printf("push metrics response read failed: %v", err)
+		return nil
+	}
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "ok" {
+		return nil
+	}
+
+	var parsed metricsResponse
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		log.Printf("push metrics response ignored: invalid JSON: %v", err)
+		return nil
+	}
+	return parsed.Update
 }
 
 func StartWithCache(ctx context.Context, targets []reportcfg.Target, interval time.Duration, s nodeiface.PushSource, debug bool, requireHTTPS bool, cache *Cache) error {
@@ -649,8 +683,9 @@ func start(ctx context.Context, specs []reportcfg.Target, interval time.Duration
 }
 
 type targetResult struct {
-	ok  bool
-	err error
+	ok       bool
+	manifest *selfupdate.Manifest
+	err      error
 }
 
 func (a *agent) sendRound(ctx context.Context) error {
@@ -672,14 +707,16 @@ func (a *agent) sendRound(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ok, err := a.sendTarget(ctx, target, body)
-			results <- targetResult{ok: ok, err: err}
+			ok, manifest, err := a.sendTarget(ctx, target, body)
+			results <- targetResult{ok: ok, manifest: manifest, err: err}
 		}()
 	}
 	wg.Wait()
 	close(results)
 
 	success := false
+	var manifest *selfupdate.Manifest
+	conflict := false
 	for result := range results {
 		if result.err != nil {
 			if ctx.Err() != nil {
@@ -688,6 +725,27 @@ func (a *agent) sendRound(ctx context.Context) error {
 			return result.err
 		}
 		success = success || result.ok
+		if result.manifest == nil {
+			continue
+		}
+		if manifest == nil {
+			manifest = result.manifest
+			continue
+		}
+		if *manifest != *result.manifest {
+			conflict = true
+		}
+	}
+	if conflict {
+		a.roundErrLimiter.logf("push update skipped: conflicting manifests in one round")
+	} else if manifest != nil {
+		if err := selfupdate.Apply(ctx, *manifest); err != nil {
+			if errors.Is(err, selfupdate.ErrRestart) {
+				log.Printf("node update staged: version=%s", manifest.Version)
+				return selfupdate.ErrRestart
+			}
+			a.roundErrLimiter.logf("push update failed: %v", err)
+		}
 	}
 	if success {
 		if a.cache != nil {
@@ -700,19 +758,19 @@ func (a *agent) sendRound(ctx context.Context) error {
 	return nil
 }
 
-func (a *agent) sendTarget(ctx context.Context, target *target, body []byte) (bool, error) {
+func (a *agent) sendTarget(ctx context.Context, target *target, body []byte) (bool, *selfupdate.Manifest, error) {
 	resp, err := sendReport(ctx, target, body)
 	if err != nil {
 		if err := target.delivery.handleError(ctx, target, err); err != nil {
-			return false, err
+			return false, nil, err
 		}
-		return false, nil
+		return false, nil, nil
 	}
-	ok, recoverStatic := target.delivery.handleResponse(resp, target, a.debug)
+	ok, recoverStatic, manifest := target.delivery.handleResponse(resp, target, a.debug)
 	if recoverStatic {
 		target.wakeStatic("recovery")
 	}
-	return ok, nil
+	return ok, manifest, nil
 }
 
 func (a *agent) startStatic(ctx context.Context) {

@@ -63,6 +63,22 @@ Transport rules:
 Response handling:
 
 - `200 OK` is the only successful response for push target requests.
+- `/api/node/metrics` may return an empty body, plain `ok`, or JSON. JSON responses may include an optional `update` manifest:
+
+```json
+{
+  "ok": true,
+  "update": {
+    "id": "release-id",
+    "version": "1.2.3",
+    "url": "https://dashboard.example/releases/Ithiltir-node-windows-amd64.exe",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "size": 12345678
+  }
+}
+```
+
+- `update.version`, `update.url`, `update.sha256`, and positive byte `update.size` are required when `update` is present. Current self-update staging is supported only when the node is launched by the Windows runner; nodes launched directly ignore the manifest.
 - Any non-`200` response fails that target for the current round.
 - `/api/node/identity` must return JSON with `install_id`; `created` is optional behavior metadata.
 

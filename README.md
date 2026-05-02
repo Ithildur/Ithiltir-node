@@ -100,9 +100,11 @@ build/
   windows/
     node_windows_amd64.exe
     node_windows_arm64.exe
+    runner_windows_amd64.exe
+    runner_windows_arm64.exe
 ```
 
-- GitHub Release title is the version tag. Assets are plain binaries named `Ithiltir-node-<os>-<arch>`; Windows keeps `.exe`, and checksums are uploaded separately
+- GitHub Release title is the version tag. Assets are plain binaries named `Ithiltir-node-<os>-<arch>` and `Ithiltir-runner-<os>-<arch>`; Windows keeps `.exe`, and checksums are uploaded separately
 - The scripts install GoReleaser `v2.15.2` if it is missing
 
 ## Docs

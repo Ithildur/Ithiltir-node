@@ -39,9 +39,37 @@ builds:
       - -s -w -X Ithiltir-node/internal/app.Version={{ if .Env.VERSION }}{{ .Env.VERSION }}{{ else }}{{ .Version }}{{ end }}
 
     binary: node
+  - id: runner
+    dir: .
+    main: ./cmd/runner
+    builder: go
+    tool: go
+    command: build
+
+    targets:
+      - windows_amd64_v1
+      - windows_arm64_v8.0
+
+    env:
+      - CGO_ENABLED=0
+
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
+    binary: ithiltir-runner
 
 archives:
-  - id: binaries
+  - id: node-binaries
+    ids:
+      - node
     formats:
       - binary
     name_template: 'Ithiltir-node-{{ if eq .Os "darwin" }}macos{{ else }}{{ .Os }}{{ end }}-{{ .Arch }}'
+  - id: runner-binaries
+    ids:
+      - runner
+    formats:
+      - binary
+    name_template: 'Ithiltir-runner-{{ .Os }}-{{ .Arch }}'
