@@ -9,6 +9,7 @@
 - 本地 HTTP 处理器：[`internal/server/server.go`](../internal/server/server.go)
 - 推送客户端：[`internal/push/push.go`](../internal/push/push.go)
 - 上报配置：[`internal/reportcfg/config.go`](../internal/reportcfg/config.go)
+- 暂存更新：[`internal/selfupdate/update.go`](../internal/selfupdate/update.go)
 
 ## HTTP 接口
 
@@ -16,14 +17,14 @@
 
 | 范围 | 路径 | 方法 | 数据 | 成功 | 说明 |
 | --- | --- | --- | --- | --- | --- |
-| Serve 本地 | `/` | `GET` | HTML | `200` | 内置单节点页面。见 [serve_page_api_CN.md](serve_page_api_CN.md)。 |
-| Serve 本地 | `/serve` | `GET` | HTML | `200` | `/` 的别名。 |
-| Serve 本地 | `/metrics` | `GET` | `NodeReport` | `200` | 首次采样前返回 `503`。 |
-| Serve 本地 | `/static` | `GET` | `Static` | `200` | 静态数据未就绪前返回 `503`。 |
+| 本地页面 | `/` | `GET` | HTML | `200` | 内置单节点页面。见 [local_page_api_CN.md](local_page_api_CN.md)。 |
+| 本地页面 | `/local` | `GET` | HTML | `200` | `/` 的别名。 |
+| 本地页面 | `/metrics` | `GET` | `NodeReport` | `200` | 首次采样前返回 `503`。 |
+| 本地页面 | `/static` | `GET` | `Static` | `200` | 静态数据未就绪前返回 `503`。 |
 | Push 目标 | `/api/node/metrics` | `POST` | `NodeReport` | `200` | 需要 `X-Node-Secret`。 |
 | Push 目标 | `/api/node/static` | `POST` | `Static` | `200` | 需要 `X-Node-Secret`。由 `/metrics` target URL 推导。 |
 | Push 目标 | `/api/node/identity` | `POST` | `{}` | `200` | 需要 `X-Node-Secret`。返回 `{ "install_id": "...", "created": true/false }`。 |
-| Push 本地 | `/` | `GET` | `NodeReport` | `200` | Push 模式绑定到 `127.0.0.1:${NODE_PORT:-9100}`。优先返回最近一次成功上报的结果，否则返回当前快照。 |
+| Push debug 本地 | `/` | `GET` | `NodeReport` | `200` | 仅 `push --debug` 启用；绑定到 `127.0.0.1:${NODE_PORT:-9101}`。优先返回最近一次成功上报的结果，否则返回当前快照。 |
 
 本地 `GET` 路由也接受 `HEAD`。其他方法返回 `405`，并带 `Allow: GET, HEAD`。
 
@@ -62,12 +63,12 @@ target URL 规则：
 
 响应处理：
 
-- `200 OK` 是 Push 目标请求的唯一成功响应。
-- `/api/node/metrics` 可以返回空 body、纯文本 `ok`，或 JSON。JSON 响应可包含可选的 `update` manifest：
+- `200 OK` 是 Push 目标请求的唯一成功响应。target 是否成功只看 HTTP 状态；响应 body 只影响更新暂存。
+- `/api/node/metrics` 可以返回非 JSON 内容、空 body，或 JSON。只有 `Content-Type` 为 `application/json` 时才解析 update manifest；允许 `charset=utf-8` 这类 media type 参数。
+- JSON 响应可包含可选的 `update` manifest：
 
 ```json
 {
-  "ok": true,
   "update": {
     "id": "release-id",
     "version": "1.2.3",
@@ -78,7 +79,13 @@ target URL 规则：
 }
 ```
 
-- `update` 存在时，`update.version`、`update.url`、`update.sha256` 和正数字节数 `update.size` 必填。当前只有由 Windows runner 启动的 node 支持自更新暂存；直接启动的 node 会忽略该 manifest。
+- 其他顶层 JSON 字段会被忽略；`ok` 不是必填字段。
+- `update` 存在时，`update.version`、`update.url`、`update.sha256` 和正数字节数 `update.size` 必填。`update.id` 是可选元数据。
+- `update.url` 必须是带 host 的绝对 `http` 或 `https` URL。`update.version` 不得包含路径分隔符。`update.sha256` 是期望的 SHA-256 十六进制摘要，`update.size` 必须等于下载字节数。
+- 只有由 Windows runner 启动的 node（`ITHILTIR_NODE_RUNNER=1`）会暂存自更新。直接运行 `node push` 会忽略 update manifest。非 Windows 不支持自更新。
+- 如果同一轮里多个 target 返回 update manifest，所有 manifest 的 `id`、`version`、`url`、`sha256` 和 `size` 必须一致；有冲突则跳过更新。
+- 成功暂存更新后，`node push` 会干净退出。Windows runner 校验暂存文件，替换 `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`，然后重启 node。
+- JSON 格式错误、manifest 非法、下载失败、大小不匹配或校验和不匹配时，跳过更新并继续上报。
 - 任何非 `200` 响应都会让该 target 在当前轮失败。
 - `/api/node/identity` 必须返回带 `install_id` 的 JSON；`created` 只是行为元数据。
 

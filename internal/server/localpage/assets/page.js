@@ -6,7 +6,7 @@
     staticEndpoint: "/static",
     mode: "node-report",
     pollMs: 5000,
-    ...(window.ITHILTIR_SERVE || {})
+    ...(window.ITHILTIR_LOCAL || {})
   };
 
   const binds = new Map();
@@ -157,7 +157,7 @@
   }
 
   function toView(report, stat) {
-    if (cfg.mode === "serve-view") return report;
+    if (cfg.mode === "local-view") return report;
 
     const metrics = report.metrics || {};
     const staticCPU = stat?.cpu?.info;
@@ -350,7 +350,7 @@
   }
 
   async function refreshStatic() {
-    if (!cfg.staticEndpoint || cfg.mode === "serve-view") return;
+    if (!cfg.staticEndpoint || cfg.mode === "local-view") return;
     try {
       const res = await fetch(cfg.staticEndpoint, { headers: { Accept: "application/json" }, cache: "no-store" });
       if (res.ok) staticSnap = await res.json();

@@ -4,24 +4,26 @@
 
 Node metrics agent with two modes:
 
-- `serve`: run the local node page
+- `local`: expose the local page and local APIs
 - `push`: post reports to a dashboard and keep a local cached report
 
 ## Modes
 
-### Serve
+### Local
+
+![Local page preview](image.png)
 
 ```bash
 ./node
-./node serve [listen_ip] [listen_port] [--net iface1,iface2] [--debug]
+./node local [listen_ip] [listen_port] [--net iface1,iface2] [--debug]
 ```
 
 - Default listen: `0.0.0.0:9100`
 - Env override: `NODE_HOST`, `NODE_PORT`
-- Page: `GET /` or `GET /serve`
+- Page: `GET /` or `GET /local`
 - Metrics endpoint: `GET /metrics`
 - Static hardware endpoint: `GET /static`
-- Page override: set `ITHILTIR_NODE_SERVE_PAGE_DIR`, or place `servepage/` next to the binary; public assets live under `servepage/assets/`
+- Page override: set `ITHILTIR_NODE_LOCAL_PAGE_DIR`, or place `localpage/` next to the binary; public assets live under `localpage/assets/`
 
 ### Push
 
@@ -33,7 +35,7 @@ Node metrics agent with two modes:
 - Override the config path with `ITHILTIR_NODE_REPORT_CONFIG`
 - Each target URL is the dashboard metrics endpoint and receives `X-Node-Secret: <key>`
 - If a target URL ends with `/metrics`, static metadata is posted to the sibling `/static` URL
-- Local endpoint: `GET http://127.0.0.1:${NODE_PORT:-9100}/`
+- Debug local endpoint: `GET http://127.0.0.1:${NODE_PORT:-9101}/`
 - HTTPS targets can fall back to HTTP unless `--require-https` is set
 
 Report target commands:
@@ -49,6 +51,16 @@ Use `report install` from install scripts. The URL must point at the dashboard `
 Use `report update` only to rotate an existing target key; URL changes go through `report install`.
 The config file keeps `version` and `targets`; each target has `id`, `url`, `key`, and optional `server_install_id`.
 Writes are atomic and keep file mode `0600`.
+
+### Windows Runner
+
+```powershell
+.\ithiltir-runner.exe [node args...]
+```
+
+- Windows only; no args defaults to `push`
+- Supervises `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe` and uses `%ProgramData%\Ithiltir-node` as the working directory
+- Enables staged node updates from dashboard metrics responses; direct `node push` runs ignore update manifests
 
 ### Version
 
@@ -104,25 +116,28 @@ build/
     runner_windows_arm64.exe
 ```
 
-- GitHub Release title is the version tag. Assets are plain binaries named `Ithiltir-node-<os>-<arch>` and `Ithiltir-runner-<os>-<arch>`; Windows keeps `.exe`, and checksums are uploaded separately
+- GitHub Release title is the version tag. Node assets are plain binaries named `Ithiltir-node-<os>-<arch>`; Windows runner assets are named `Ithiltir-runner-windows-<arch>`. Windows keeps `.exe`, and checksums are uploaded separately
 - The scripts install GoReleaser `v2.15.2` if it is missing
 
 ## Docs
 
 - Reporting API: [English](docs/reporting_apis.md), [中文](docs/reporting_apis_CN.md)
-- Serve page API: [English](docs/serve_page_api.md), [中文](docs/serve_page_api_CN.md)
+- Local page API: [English](docs/local_page_api.md), [中文](docs/local_page_api_CN.md)
 - Disk schema: [English](docs/api_disk.md), [中文](docs/api_disk_CN.md)
 
 ## Layout
 
 ```text
 cmd/node         entry point
+cmd/runner       Windows runner entry point
 internal/app     mode dispatch and lifecycle
 internal/cli     flag parsing
 internal/collect samplers and platform collectors
 internal/metrics runtime and static JSON types
 internal/push    push client
 internal/reportcfg report target config
+internal/runner  Windows runner supervisor
+internal/selfupdate staged update support
 internal/server  HTTP handlers
 scripts/         build scripts
 build/           generated artifacts

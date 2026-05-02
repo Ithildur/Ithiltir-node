@@ -9,6 +9,7 @@ Code of record:
 - local HTTP handlers: [`internal/server/server.go`](../internal/server/server.go)
 - push client: [`internal/push/push.go`](../internal/push/push.go)
 - report config: [`internal/reportcfg/config.go`](../internal/reportcfg/config.go)
+- self-update staging: [`internal/selfupdate/update.go`](../internal/selfupdate/update.go)
 
 ## HTTP Surface
 
@@ -16,14 +17,14 @@ The `/api/node/*` endpoints are dashboard endpoints. Ithiltir-node calls them in
 
 | Surface | Path | Method | Payload | Success | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Serve local | `/` | `GET` | HTML | `200` | Built-in single-node page. See [serve_page_api.md](serve_page_api.md). |
-| Serve local | `/serve` | `GET` | HTML | `200` | Alias for `/`. |
-| Serve local | `/metrics` | `GET` | `NodeReport` | `200` | Returns `503` before the first snapshot. |
-| Serve local | `/static` | `GET` | `Static` | `200` | Returns `503` before static data is ready. |
+| Local page | `/` | `GET` | HTML | `200` | Built-in single-node page. See [local_page_api.md](local_page_api.md). |
+| Local page | `/local` | `GET` | HTML | `200` | Alias for `/`. |
+| Local page | `/metrics` | `GET` | `NodeReport` | `200` | Returns `503` before the first snapshot. |
+| Local page | `/static` | `GET` | `Static` | `200` | Returns `503` before static data is ready. |
 | Push target | `/api/node/metrics` | `POST` | `NodeReport` | `200` | Requires `X-Node-Secret`. |
 | Push target | `/api/node/static` | `POST` | `Static` | `200` | Requires `X-Node-Secret`. Derived from a `/metrics` target URL. |
 | Push target | `/api/node/identity` | `POST` | `{}` | `200` | Requires `X-Node-Secret`. Returns `{ "install_id": "...", "created": true/false }`. |
-| Push local | `/` | `GET` | `NodeReport` | `200` | Bound to `127.0.0.1:${NODE_PORT:-9100}` in Push mode. Returns the last successfully pushed report when available, otherwise the current snapshot. |
+| Push debug local | `/` | `GET` | `NodeReport` | `200` | Only enabled with `push --debug`; bound to `127.0.0.1:${NODE_PORT:-9101}`. Returns the last successfully pushed report when available, otherwise the current snapshot. |
 
 Local `GET` routes also accept `HEAD`. Other methods return `405` with `Allow: GET, HEAD`.
 
@@ -62,12 +63,12 @@ Transport rules:
 
 Response handling:
 
-- `200 OK` is the only successful response for push target requests.
-- `/api/node/metrics` may return an empty body, plain `ok`, or JSON. JSON responses may include an optional `update` manifest:
+- `200 OK` is the only successful response for push target requests. The HTTP status decides target success; response body parsing only controls update staging.
+- `/api/node/metrics` may return non-JSON content, an empty body, or JSON. Update manifests are parsed only when `Content-Type` is `application/json`; media type parameters such as `charset=utf-8` are accepted.
+- JSON responses may include an optional `update` manifest:
 
 ```json
 {
-  "ok": true,
   "update": {
     "id": "release-id",
     "version": "1.2.3",
@@ -78,7 +79,13 @@ Response handling:
 }
 ```
 
-- `update.version`, `update.url`, `update.sha256`, and positive byte `update.size` are required when `update` is present. Current self-update staging is supported only when the node is launched by the Windows runner; nodes launched directly ignore the manifest.
+- Other top-level JSON fields are ignored; `ok` is not required.
+- `update.version`, `update.url`, `update.sha256`, and positive byte `update.size` are required when `update` is present. `update.id` is optional metadata.
+- `update.url` must be an absolute `http` or `https` URL with a host. `update.version` must not contain path separators. `update.sha256` is the expected SHA-256 hex digest, and `update.size` must equal the downloaded byte count.
+- A node stages self-updates only when launched by the Windows runner (`ITHILTIR_NODE_RUNNER=1`). Direct `node push` runs ignore update manifests. Non-Windows self-update is not supported.
+- If multiple targets return update manifests in the same round, all returned manifests must match by `id`, `version`, `url`, `sha256`, and `size`; conflicting manifests are skipped.
+- A staged update makes `node push` exit cleanly. The Windows runner verifies the staged file, replaces `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`, and restarts the node.
+- Invalid JSON, invalid manifests, download failures, size mismatches, and checksum mismatches skip the update and keep reporting.
 - Any non-`200` response fails that target for the current round.
 - `/api/node/identity` must return JSON with `install_id`; `created` is optional behavior metadata.
 

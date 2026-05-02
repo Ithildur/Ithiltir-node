@@ -4,24 +4,26 @@
 
 节点指标采集器，只有两种模式：
 
-- `serve`：运行本地节点页面
+- `local`：提供本地节点页面和本地接口
 - `push`：向面板上报，同时保留本地缓存结果
 
 ## 模式
 
-### Serve
+### Local
+
+![本地页面预览](image.png)
 
 ```bash
 ./node
-./node serve [listen_ip] [listen_port] [--net iface1,iface2] [--debug]
+./node local [listen_ip] [listen_port] [--net iface1,iface2] [--debug]
 ```
 
 - 默认监听：`0.0.0.0:9100`
 - 环境变量覆盖：`NODE_HOST`、`NODE_PORT`
-- 页面：`GET /` 或 `GET /serve`
+- 页面：`GET /` 或 `GET /local`
 - 指标接口：`GET /metrics`
 - 静态硬件接口：`GET /static`
-- 页面覆盖：设置 `ITHILTIR_NODE_SERVE_PAGE_DIR`，或把 `servepage/` 放在二进制同级目录；公开资源放在 `servepage/assets/`
+- 页面覆盖：设置 `ITHILTIR_NODE_LOCAL_PAGE_DIR`，或把 `localpage/` 放在二进制同级目录；公开资源放在 `localpage/assets/`
 
 ### Push
 
@@ -33,7 +35,7 @@
 - 可用 `ITHILTIR_NODE_REPORT_CONFIG` 覆盖配置路径
 - 每个 target URL 指向 dashboard 指标接口，并携带 `X-Node-Secret: <key>`
 - target URL 以 `/metrics` 结尾时，静态元数据会发到同级 `/static` URL
-- 本地接口：`GET http://127.0.0.1:${NODE_PORT:-9100}/`
+- Debug 本地接口：`GET http://127.0.0.1:${NODE_PORT:-9101}/`
 - HTTPS target 默认可回落 HTTP；加 `--require-https` 后禁止回落
 
 上报目标命令：
@@ -49,6 +51,16 @@
 `report update` 只用于轮换已有 target 的 key；URL 修改必须走 `report install`。
 配置文件包含 `version` 和 `targets`；每个 target 有 `id`、`url`、`key`，以及可选 `server_install_id`。
 写入使用原子 rename，并保持文件权限 `0600`。
+
+### Windows Runner
+
+```powershell
+.\ithiltir-runner.exe [node args...]
+```
+
+- 仅 Windows；不传参数时默认执行 `push`
+- 托管 `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`，工作目录为 `%ProgramData%\Ithiltir-node`
+- 启用 dashboard 指标响应里的 node 暂存更新；直接运行 `node push` 会忽略 update manifest
 
 ### Version
 
@@ -104,25 +116,28 @@ build/
     runner_windows_arm64.exe
 ```
 
-- GitHub Release 标题是版本 tag。产物是裸二进制，命名为 `Ithiltir-node-<os>-<arch>` 和 `Ithiltir-runner-<os>-<arch>`；Windows 保留 `.exe`，checksums 单独上传
+- GitHub Release 标题是版本 tag。node 产物是裸二进制，命名为 `Ithiltir-node-<os>-<arch>`；Windows runner 产物命名为 `Ithiltir-runner-windows-<arch>`。Windows 保留 `.exe`，checksums 单独上传
 - 脚本会在缺失时自动安装 GoReleaser `v2.15.2`
 
 ## 文档
 
 - 上报接口：[English](docs/reporting_apis.md)，[中文](docs/reporting_apis_CN.md)
-- Serve 页面 API：[English](docs/serve_page_api.md)，[中文](docs/serve_page_api_CN.md)
+- 本地页面 API：[English](docs/local_page_api.md)，[中文](docs/local_page_api_CN.md)
 - 磁盘结构：[English](docs/api_disk.md)，[中文](docs/api_disk_CN.md)
 
 ## 目录
 
 ```text
 cmd/node         入口
+cmd/runner       Windows runner 入口
 internal/app     模式分发和生命周期
 internal/cli     参数解析
 internal/collect 采样器和平台采集逻辑
 internal/metrics 运行时与静态 JSON 结构
 internal/push    推送客户端
 internal/reportcfg 上报目标配置
+internal/runner  Windows runner 监管进程
+internal/selfupdate 暂存更新支持
 internal/server  HTTP 处理器
 scripts/         构建脚本
 build/           生成产物

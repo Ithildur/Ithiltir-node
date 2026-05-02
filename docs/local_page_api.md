@@ -1,22 +1,22 @@
-# Serve Page API
+# Local Page API
 
-This document covers the built-in single-node page served by Ithiltir-node in Serve mode.
+This document covers the built-in single-node page exposed by Ithiltir-node through local mode.
 
 Code of record:
 
 - local HTTP handlers: [`internal/server/server.go`](../internal/server/server.go)
-- page shell: [`internal/server/servepage/page.html`](../internal/server/servepage/page.html)
-- page runtime: [`internal/server/servepage/assets/page.js`](../internal/server/servepage/assets/page.js)
-- page styles: [`internal/server/servepage/assets/page.css`](../internal/server/servepage/assets/page.css)
+- page shell: [`internal/server/localpage/page.html`](../internal/server/localpage/page.html)
+- page runtime: [`internal/server/localpage/assets/page.js`](../internal/server/localpage/assets/page.js)
+- page styles: [`internal/server/localpage/assets/page.css`](../internal/server/localpage/assets/page.css)
 - JSON payloads: [reporting_apis.md](reporting_apis.md)
 
 ## Routes
 
 | Path | Method | Response | Notes |
 | --- | --- | --- | --- |
-| `/` | `GET` | HTML | Serve page. Sends `Cache-Control: no-store`. |
-| `/serve` | `GET` | HTML | Alias for `/`. |
-| `/serve-assets/<name>` | `GET` | file | Serves files under the selected `servepage/assets/` directory. |
+| `/` | `GET` | HTML | Local page. Sends `Cache-Control: no-store`. |
+| `/local` | `GET` | HTML | Alias for `/`. |
+| `/local-assets/<name>` | `GET` | file | Serves files under the selected `localpage/assets/` directory. |
 | `/metrics` | `GET` | `NodeReport` | Returns `503` before the first sample. |
 | `/static` | `GET` | `Static` | Returns `503` before static data is ready. |
 
@@ -24,24 +24,24 @@ Local `GET` routes also accept `HEAD`. Other methods return `405` with `Allow: G
 
 Asset rules:
 
-- `/serve-assets/` does not list directories.
+- `/local-assets/` does not list directories.
 - Invalid asset paths, missing files, and directories return `404`.
-- Assets outside `servepage/assets/` are not served.
+- Assets outside `localpage/assets/` are not served.
 
 ## Page Resolution
 
 The page source is selected when the HTTP server starts:
 
-1. If `ITHILTIR_NODE_SERVE_PAGE_DIR` is set and contains `page.html`, use that directory.
-2. If `ITHILTIR_NODE_SERVE_PAGE_DIR` is set but does not contain `page.html`, log the problem and use the embedded page.
-3. If the environment variable is not set and `servepage/page.html` exists next to the binary, use that directory.
+1. If `ITHILTIR_NODE_LOCAL_PAGE_DIR` is set and contains `page.html`, use that directory.
+2. If `ITHILTIR_NODE_LOCAL_PAGE_DIR` is set but does not contain `page.html`, log the problem and use the embedded page.
+3. If the environment variable is not set and `localpage/page.html` exists next to the binary, use that directory.
 4. Otherwise use the embedded page.
 
 External layout:
 
 ```text
 node
-servepage/
+localpage/
   page.html
   assets/
     page.css
@@ -51,17 +51,17 @@ servepage/
 Example:
 
 ```bash
-ITHILTIR_NODE_SERVE_PAGE_DIR=/opt/ithiltir-node/servepage ./node serve
+ITHILTIR_NODE_LOCAL_PAGE_DIR=/opt/ithiltir-node/localpage ./node local
 ```
 
-`page.html` is required for an external page. `assets/` is optional, but any file referenced through `/serve-assets/*` must live under `assets/`.
+`page.html` is required for an external page. `assets/` is optional, but any file referenced through `/local-assets/*` must live under `assets/`.
 
 ## Frontend Runtime
 
-The default page defines `window.ITHILTIR_SERVE`, and `page.js` merges that object over its own defaults:
+The default page defines `window.ITHILTIR_LOCAL`, and `page.js` merges that object over its own defaults:
 
 ```js
-window.ITHILTIR_SERVE = {
+window.ITHILTIR_LOCAL = {
   endpoint: "/metrics",
   staticEndpoint: "/static",
   mode: "node-report",
@@ -73,17 +73,17 @@ window.ITHILTIR_SERVE = {
 | --- | --- | --- |
 | `endpoint` | `/metrics` | Runtime data endpoint. |
 | `staticEndpoint` | `/static` | Static hardware endpoint. Empty value disables static fetches. |
-| `mode` | `node-report` | `node-report` adapts `NodeReport`; `serve-view` renders a view model directly. |
+| `mode` | `node-report` | `node-report` adapts `NodeReport`; `local-view` renders a view model directly. |
 | `pollMs` | `5000` | Poll interval. Values below `1000` are clamped to `1000`. |
 
 Mode behavior:
 
 - `node-report`: `endpoint` returns `NodeReport`; `staticEndpoint` returns `Static`; `page.js` adapts both through `toView(report, stat)`.
-- `serve-view`: `endpoint` returns the view model shown below; `staticEndpoint` is ignored.
+- `local-view`: `endpoint` returns the view model shown below; `staticEndpoint` is ignored.
 
 ## Default Mapping
 
-Adapter: [`internal/server/servepage/assets/page.js`](../internal/server/servepage/assets/page.js), `toView(report, stat)`.
+Adapter: [`internal/server/localpage/assets/page.js`](../internal/server/localpage/assets/page.js), `toView(report, stat)`.
 
 | UI item | Source |
 | --- | --- |
@@ -114,14 +114,14 @@ Display rules:
 - Disk, IO, network, and RAID lists show at most eight rows.
 - Empty or unavailable RAID hides the `cat /proc/mdstat` section.
 
-## `serve-view` Payload
+## `local-view` Payload
 
-`serve-view` is for callers that want to reuse the page shell but supply display-ready values directly. String fields are rendered as-is. `cpu`, `memory`, and `disk` are ratios in `0..1`.
+`local-view` is for callers that want to reuse the page shell but supply display-ready values directly. String fields are rendered as-is. `cpu`, `memory`, and `disk` are ratios in `0..1`.
 
 ```js
-window.ITHILTIR_SERVE = {
-  endpoint: "/api/serve/view",
-  mode: "serve-view",
+window.ITHILTIR_LOCAL = {
+  endpoint: "/api/local/view",
+  mode: "local-view",
   pollMs: 5000
 };
 ```
@@ -173,6 +173,6 @@ window.ITHILTIR_SERVE = {
 ## Customization Boundaries
 
 - Visual changes belong in `page.html` and `assets/page.css`.
-- Data mapping changes belong in `window.ITHILTIR_SERVE` or `assets/page.js`.
+- Data mapping changes belong in `window.ITHILTIR_LOCAL` or `assets/page.js`.
 - Keep `/metrics` and `/static` as their documented JSON contracts.
 - Do not put `X-Node-Secret` or dashboard credentials in browser code.

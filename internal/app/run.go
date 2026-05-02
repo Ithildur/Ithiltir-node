@@ -41,8 +41,8 @@ func Run(rawArgs []string) int {
 	}
 	cfg.Debug = debug
 
-	if len(args) == 0 || args[0] == "serve" {
-		return runServe(args, cfg, debug)
+	if len(args) == 0 || args[0] == "local" {
+		return runLocal(args, cfg, debug)
 	}
 
 	if args[0] == "push" {
@@ -57,7 +57,7 @@ func Run(rawArgs []string) int {
 	return 1
 }
 
-func runServe(args []string, cfg collect.Config, debug bool) int {
+func runLocal(args []string, cfg collect.Config, debug bool) int {
 	listenIP := "0.0.0.0"
 	listenPort := "9100"
 
@@ -81,7 +81,7 @@ func runServe(args []string, cfg collect.Config, debug bool) int {
 	defer s.Stop()
 
 	srv, addr := server.NewServer(listenIP, listenPort, s, debug)
-	log.Printf("Ithiltir-node (serve mode) listening on %s", addr)
+	log.Printf("Ithiltir-node (local mode) listening on %s", addr)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -143,32 +143,45 @@ func runPush(args []string, cfg collect.Config, debug bool, requireHTTPS bool) i
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	listenIP := "127.0.0.1"
-	listenPort := "9100"
-	if envPort := os.Getenv("NODE_PORT"); envPort != "" {
-		listenPort = envPort
-	}
+	var cache *push.Cache
+	var srv *http.Server
+	if debug {
+		cache = push.NewCache()
+		listenPort := "9101"
+		if envPort := os.Getenv("NODE_PORT"); envPort != "" {
+			listenPort = envPort
+		}
 
-	cache := push.NewCache()
-	localReport := func() *metrics.NodeReport {
-		if cached := cache.Get(); cached != nil {
-			return cached
+		localReport := func() *metrics.NodeReport {
+			if cached := cache.Get(); cached != nil {
+				return cached
+			}
+			m := s.Snapshot()
+			if m == nil {
+				return nil
+			}
+			report := metrics.NewNodeReport(s.Version(), s.Hostname(), s.Time(), m)
+			return &report
 		}
-		m := s.Snapshot()
-		if m == nil {
-			return nil
-		}
-		report := metrics.NewNodeReport(s.Version(), s.Hostname(), s.Time(), m)
-		return &report
-	}
-	srv, addr := server.NewPushServer(listenIP, listenPort, localReport)
-	log.Printf("Ithiltir-node (push mode) local metrics on %s/", addr)
+		var addr string
+		srv, addr = server.NewPushServer("127.0.0.1", listenPort, localReport)
+		log.Printf("Ithiltir-node (push debug mode) local metrics on %s/", addr)
 
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("push metrics server error: %v", err)
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("push metrics server error: %v", err)
+			}
+		}()
+	}
+	shutdownDebugServer := func() {
+		if srv == nil {
+			return
 		}
-	}()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = srv.Shutdown(shutdownCtx)
+		shutdownCancel()
+		_ = srv.Close()
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -178,28 +191,19 @@ func runPush(args []string, cfg collect.Config, debug bool, requireHTTPS bool) i
 	select {
 	case sig := <-sigCh:
 		cancel()
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = srv.Shutdown(shutdownCtx)
-		shutdownCancel()
-		_ = srv.Close()
+		shutdownDebugServer()
 		return exitCodeForSignal(sig)
 	case err := <-errCh:
 		if errors.Is(err, selfupdate.ErrRestart) {
 			cancel()
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = srv.Shutdown(shutdownCtx)
-			shutdownCancel()
-			_ = srv.Close()
+			shutdownDebugServer()
 			return 0
 		}
 		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("push error: %v", err)
 			return 1
 		}
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = srv.Shutdown(shutdownCtx)
-		shutdownCancel()
-		_ = srv.Close()
+		shutdownDebugServer()
 		return 0
 	}
 }
@@ -505,9 +509,9 @@ func promptStreams() (io.Reader, io.Writer, func(), bool) {
 
 func printUsage() {
 	fmt.Println("Usage:")
-	fmt.Println("  Serve:")
+	fmt.Println("  Local:")
 	fmt.Println("    ./node [--net iface1,iface2] [--debug]")
-	fmt.Println("    ./node serve [listen_ip] [listen_port] [--net iface1,iface2] [--debug]")
+	fmt.Println("    ./node local [listen_ip] [listen_port] [--net iface1,iface2] [--debug]")
 	fmt.Println()
 	fmt.Println("  Push:")
 	fmt.Println("    ./node push [interval_seconds] [--net iface1,iface2] [--debug] [--require-https]")

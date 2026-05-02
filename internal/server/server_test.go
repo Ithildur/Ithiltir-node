@@ -32,7 +32,7 @@ func (s reportOnlySource) Time() time.Time             { return time.Date(2026, 
 func (s reportOnlySource) Version() string             { return "0.3.0" }
 func (s reportOnlySource) Hostname() string            { return "node-a" }
 
-func TestServePageKeepsMetricsJSON(t *testing.T) {
+func TestLocalPageKeepsMetricsJSON(t *testing.T) {
 	srv, _ := NewServer("127.0.0.1", "0", testSource{snapshot: &metrics.Snapshot{
 		CPU: metrics.CPU{UsageRatio: 0.42},
 		System: metrics.System{
@@ -49,8 +49,8 @@ func TestServePageKeepsMetricsJSON(t *testing.T) {
 	if ct := page.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
 		t.Fatalf("GET / Content-Type = %q, want text/html", ct)
 	}
-	if !strings.Contains(page.Body.String(), "<title>Ithiltir-node Serve</title>") {
-		t.Fatal("GET / did not return the Serve page")
+	if !strings.Contains(page.Body.String(), "<title>Ithiltir-node Local</title>") {
+		t.Fatal("GET / did not return the local page")
 	}
 
 	report := httptest.NewRecorder()
@@ -66,20 +66,26 @@ func TestServePageKeepsMetricsJSON(t *testing.T) {
 	}
 }
 
-func TestServeAliasReturnsPage(t *testing.T) {
+func TestLocalAliasReturnsPage(t *testing.T) {
 	srv, _ := NewServer("127.0.0.1", "0", testSource{snapshot: &metrics.Snapshot{}}, false)
 
 	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/serve", nil))
+	srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/local", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /serve status = %d, want 200", rec.Code)
+		t.Fatalf("GET /local status = %d, want 200", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "<title>Ithiltir-node Serve</title>") {
-		t.Fatal("GET /serve did not return the Serve page")
+	if !strings.Contains(rec.Body.String(), "<title>Ithiltir-node Local</title>") {
+		t.Fatal("GET /local did not return the local page")
+	}
+
+	old := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(old, httptest.NewRequest(http.MethodGet, "/serve", nil))
+	if old.Code != http.StatusNotFound {
+		t.Fatalf("GET /serve status = %d, want 404", old.Code)
 	}
 }
 
-func TestServeStaticEndpoint(t *testing.T) {
+func TestLocalStaticEndpoint(t *testing.T) {
 	srv, _ := NewServer("127.0.0.1", "0", testSource{
 		snapshot: &metrics.Snapshot{},
 		static: &metrics.Static{
@@ -105,7 +111,7 @@ func TestServeStaticEndpoint(t *testing.T) {
 	}
 }
 
-func TestServeStaticEndpointWithoutStaticSource(t *testing.T) {
+func TestLocalStaticEndpointWithoutStaticSource(t *testing.T) {
 	srv, _ := NewServer("127.0.0.1", "0", reportOnlySource{snapshot: &metrics.Snapshot{}}, false)
 
 	rec := httptest.NewRecorder()
@@ -115,14 +121,14 @@ func TestServeStaticEndpointWithoutStaticSource(t *testing.T) {
 	}
 }
 
-func TestServePageCanBeOverriddenAfterBuild(t *testing.T) {
+func TestLocalPageCanBeOverriddenAfterBuild(t *testing.T) {
 	dir := t.TempDir()
 	assetsDir := filepath.Join(dir, "assets")
-	t.Setenv(servePageDirEnv, dir)
+	t.Setenv(localPageDirEnv, dir)
 	if err := os.Mkdir(assetsDir, 0o755); err != nil {
 		t.Fatalf("Mkdir(assets) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "page.html"), []byte("<!doctype html><title>custom</title><p>custom serve page</p>"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "page.html"), []byte("<!doctype html><title>custom</title><p>custom local page</p>"), 0o644); err != nil {
 		t.Fatalf("WriteFile(page.html) error = %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(assetsDir, "custom.txt"), []byte("custom asset"), 0o644); err != nil {
@@ -139,28 +145,34 @@ func TestServePageCanBeOverriddenAfterBuild(t *testing.T) {
 	if page.Code != http.StatusOK {
 		t.Fatalf("GET / status = %d, want 200", page.Code)
 	}
-	if !strings.Contains(page.Body.String(), "custom serve page") {
-		t.Fatal("GET / did not return the external Serve page")
+	if !strings.Contains(page.Body.String(), "custom local page") {
+		t.Fatal("GET / did not return the external local page")
 	}
 
 	asset := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/serve-assets/custom.txt", nil))
+	srv.Handler.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/local-assets/custom.txt", nil))
 	if asset.Code != http.StatusOK {
-		t.Fatalf("GET /serve-assets/custom.txt status = %d, want 200", asset.Code)
+		t.Fatalf("GET /local-assets/custom.txt status = %d, want 200", asset.Code)
 	}
 	if strings.TrimSpace(asset.Body.String()) != "custom asset" {
-		t.Fatal("GET /serve-assets/custom.txt did not return the external asset")
+		t.Fatal("GET /local-assets/custom.txt did not return the external asset")
+	}
+
+	oldAsset := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(oldAsset, httptest.NewRequest(http.MethodGet, "/serve-assets/custom.txt", nil))
+	if oldAsset.Code != http.StatusNotFound {
+		t.Fatalf("GET /serve-assets/custom.txt status = %d, want 404", oldAsset.Code)
 	}
 
 	private := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(private, httptest.NewRequest(http.MethodGet, "/serve-assets/private.txt", nil))
+	srv.Handler.ServeHTTP(private, httptest.NewRequest(http.MethodGet, "/local-assets/private.txt", nil))
 	if private.Code != http.StatusNotFound {
-		t.Fatalf("GET /serve-assets/private.txt status = %d, want 404", private.Code)
+		t.Fatalf("GET /local-assets/private.txt status = %d, want 404", private.Code)
 	}
 
 	dirList := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(dirList, httptest.NewRequest(http.MethodGet, "/serve-assets/", nil))
+	srv.Handler.ServeHTTP(dirList, httptest.NewRequest(http.MethodGet, "/local-assets/", nil))
 	if dirList.Code != http.StatusNotFound {
-		t.Fatalf("GET /serve-assets/ status = %d, want 404", dirList.Code)
+		t.Fatalf("GET /local-assets/ status = %d, want 404", dirList.Code)
 	}
 }
