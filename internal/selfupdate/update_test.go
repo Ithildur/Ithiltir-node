@@ -5,17 +5,39 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 )
 
-func TestApplySkipsWithoutRunnerEnv(t *testing.T) {
+func TestApplySkipsWhenDisabled(t *testing.T) {
 	t.Setenv(RunnerEnv, "")
+	if Enabled() {
+		t.Skip("self update is enabled for this test binary")
+	}
 
 	if err := Apply(context.Background(), Manifest{}); err != nil {
 		t.Fatalf("Apply() error = %v, want nil", err)
+	}
+}
+
+func TestValidateRejectsReleasePathMeta(t *testing.T) {
+	for _, version := range []string{".", ".."} {
+		t.Run(version, func(t *testing.T) {
+			m := Manifest{
+				Version: version,
+				URL:     "https://example.test/node",
+				SHA256:  "0000000000000000000000000000000000000000000000000000000000000000",
+				Size:    1,
+			}
+			if err := validate(m); err == nil {
+				t.Fatal("validate() error = nil, want invalid version")
+			}
+		})
 	}
 }
 
@@ -92,5 +114,65 @@ func TestStageWindowsClearsOldStagingBeforeDownload(t *testing.T) {
 	}
 	if _, err := os.Stat(stagedManifestPath(home)); !os.IsNotExist(err) {
 		t.Fatalf("staged manifest still exists after failed stage: %v", err)
+	}
+}
+
+func TestApplyUnixSwitchesCurrentRelease(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix symlink update")
+	}
+
+	body := []byte("new node binary")
+	sum := sha256.Sum256(body)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	home := t.TempDir()
+	oldDir := releaseDir(home, "1.0.0")
+	if err := os.MkdirAll(oldDir, 0o755); err != nil {
+		t.Fatalf("create old release dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, nodeName), []byte("old"), 0o755); err != nil {
+		t.Fatalf("write old release: %v", err)
+	}
+	if err := os.Symlink(oldDir, currentDir(home)); err != nil {
+		t.Fatalf("create current symlink: %v", err)
+	}
+
+	m := Manifest{
+		ID:      "release-2",
+		Version: "1.2.3",
+		URL:     srv.URL,
+		SHA256:  hex.EncodeToString(sum[:]),
+		Size:    int64(len(body)),
+	}
+	err := applyUnix(context.Background(), home, m)
+	if !errors.Is(err, ErrRestart) {
+		t.Fatalf("applyUnix() error = %v, want ErrRestart", err)
+	}
+
+	current, err := os.Readlink(currentDir(home))
+	if err != nil {
+		t.Fatalf("read current symlink: %v", err)
+	}
+	if current != releaseDir(home, m.Version) {
+		t.Fatalf("current = %q, want %q", current, releaseDir(home, m.Version))
+	}
+
+	got, err := os.ReadFile(releaseNodePath(home, m.Version))
+	if err != nil {
+		t.Fatalf("read release binary: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("release binary = %q, want %q", got, body)
+	}
+	info, err := os.Stat(releaseNodePath(home, m.Version))
+	if err != nil {
+		t.Fatalf("stat release binary: %v", err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Fatalf("release binary mode = %v, want executable", info.Mode())
 	}
 }

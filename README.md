@@ -60,7 +60,13 @@ Writes are atomic and keep file mode `0600`.
 
 - Windows only; no args defaults to `push`
 - Supervises `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe` and uses `%ProgramData%\Ithiltir-node` as the working directory
-- Enables staged node updates from dashboard metrics responses; direct `node push` runs ignore update manifests
+- Enables staged node updates from dashboard metrics responses on Windows
+
+### Self Update
+
+- Windows updates require the runner (`ITHILTIR_NODE_RUNNER=1`) and replace `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`
+- Linux and macOS updates work only from the installed release layout under `/var/lib/ithiltir-node/releases`; the node downloads the new binary, switches `/var/lib/ithiltir-node/current`, exits cleanly, and lets systemd/launchd restart it
+- Direct binaries outside the installed layout ignore update manifests
 
 ### Version
 

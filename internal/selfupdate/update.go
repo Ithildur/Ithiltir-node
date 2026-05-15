@@ -19,7 +19,10 @@ import (
 
 var ErrRestart = errors.New("restart for update")
 
-const RunnerEnv = "ITHILTIR_NODE_RUNNER"
+const (
+	RunnerEnv = "ITHILTIR_NODE_RUNNER"
+	nodeName  = "ithiltir-node"
+)
 
 type Manifest struct {
 	ID      string `json:"id"`
@@ -36,18 +39,28 @@ func Apply(ctx context.Context, m Manifest) error {
 	if err := validate(m); err != nil {
 		return err
 	}
-	if runtime.GOOS != "windows" {
+	switch runtime.GOOS {
+	case "windows":
+		if err := stageWindows(ctx, DataDir(), m); err != nil {
+			return err
+		}
+		return ErrRestart
+	case "linux", "darwin":
+		return applyUnix(ctx, DataDir(), m)
+	default:
 		return fmt.Errorf("self update is not supported on %s", runtime.GOOS)
 	}
-
-	if err := stageWindows(ctx, DataDir(), m); err != nil {
-		return err
-	}
-	return ErrRestart
 }
 
 func Enabled() bool {
-	return os.Getenv(RunnerEnv) == "1"
+	switch runtime.GOOS {
+	case "windows":
+		return os.Getenv(RunnerEnv) == "1"
+	case "linux", "darwin":
+		return installedUnix(DataDir())
+	default:
+		return false
+	}
 }
 
 func DataDir() string {
@@ -62,7 +75,10 @@ func DataDir() string {
 }
 
 func NodePath() string {
-	return filepath.Join(DataDir(), "bin", "ithiltir-node.exe")
+	if runtime.GOOS == "windows" {
+		return filepath.Join(DataDir(), "bin", "ithiltir-node.exe")
+	}
+	return currentNodePath(DataDir())
 }
 
 func StagedNodePath() string {
@@ -85,9 +101,32 @@ func stagedManifestPath(home string) string {
 	return filepath.Join(stagingDir(home), "manifest.json")
 }
 
+func releasesDir(home string) string {
+	return filepath.Join(home, "releases")
+}
+
+func currentDir(home string) string {
+	return filepath.Join(home, "current")
+}
+
+func currentNodePath(home string) string {
+	return filepath.Join(currentDir(home), nodeName)
+}
+
+func releaseDir(home, version string) string {
+	return filepath.Join(releasesDir(home), version)
+}
+
+func releaseNodePath(home, version string) string {
+	return filepath.Join(releaseDir(home, version), nodeName)
+}
+
 func validate(m Manifest) error {
 	if strings.TrimSpace(m.Version) == "" {
 		return errors.New("update version is empty")
+	}
+	if m.Version == "." || m.Version == ".." {
+		return fmt.Errorf("update version is invalid: %q", m.Version)
 	}
 	if strings.ContainsAny(m.Version, `/\`) {
 		return fmt.Errorf("update version contains path separator: %q", m.Version)
@@ -156,6 +195,122 @@ func stageWindows(ctx context.Context, home string, m Manifest) error {
 	return nil
 }
 
+func applyUnix(ctx context.Context, home string, m Manifest) error {
+	if version, ok := activeUnixVersion(home); ok && version == m.Version {
+		return nil
+	}
+
+	targetDir := releaseDir(home, m.Version)
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return fmt.Errorf("create release dir: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(targetDir, ".ithiltir-node-*.new")
+	if err != nil {
+		return fmt.Errorf("create update temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close update temp file: %w", err)
+	}
+	defer os.Remove(tmpPath)
+
+	if err := download(ctx, m, tmpPath, 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, releaseNodePath(home, m.Version)); err != nil {
+		return fmt.Errorf("install release binary: %w", err)
+	}
+	if err := switchCurrent(home, targetDir); err != nil {
+		return err
+	}
+	return ErrRestart
+}
+
+func installedUnix(home string) bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	return unixManagedPath(home, exe)
+}
+
+func activeUnixVersion(home string) (string, bool) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", false
+	}
+	cleanPath, err := filepath.Abs(exe)
+	if err != nil {
+		return "", false
+	}
+	if cleanPath == currentNodePath(home) {
+		return currentUnixVersion(home)
+	}
+	return unixReleaseVersion(home, exe)
+}
+
+func currentUnixVersion(home string) (string, bool) {
+	link, err := os.Readlink(currentDir(home))
+	if err != nil {
+		return "", false
+	}
+	if !filepath.IsAbs(link) {
+		link = filepath.Join(home, link)
+	}
+	return unixReleaseVersion(home, filepath.Join(link, nodeName))
+}
+
+func unixManagedPath(home, path string) bool {
+	cleanPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	if cleanPath == currentNodePath(home) {
+		_, ok := currentUnixVersion(home)
+		return ok
+	}
+	_, ok := unixReleaseVersion(home, cleanPath)
+	return ok
+}
+
+func unixReleaseVersion(home, path string) (string, bool) {
+	cleanPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	if filepath.Base(cleanPath) != nodeName {
+		return "", false
+	}
+	rel, err := filepath.Rel(releasesDir(home), cleanPath)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", false
+	}
+	dir, file := filepath.Split(rel)
+	if file != nodeName {
+		return "", false
+	}
+	version := strings.TrimSuffix(dir, string(os.PathSeparator))
+	if version == "" || strings.ContainsRune(version, os.PathSeparator) {
+		return "", false
+	}
+	return version, true
+}
+
+func switchCurrent(home, targetDir string) error {
+	tmp := filepath.Join(home, fmt.Sprintf(".current-%d.tmp", os.Getpid()))
+	_ = os.Remove(tmp)
+	if err := os.Symlink(targetDir, tmp); err != nil {
+		return fmt.Errorf("stage current symlink: %w", err)
+	}
+	if err := os.Rename(tmp, currentDir(home)); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("switch current symlink: %w", err)
+	}
+	return nil
+}
+
 func writeFileAtomic(dir, path string, data []byte, mode os.FileMode) error {
 	tmp, err := os.CreateTemp(dir, ".manifest-*.tmp")
 	if err != nil {
@@ -208,6 +363,11 @@ func download(ctx context.Context, m Manifest, path string, mode os.FileMode) er
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
 		return fmt.Errorf("create update temp file: %w", err)
+	}
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return fmt.Errorf("chmod update temp file: %w", err)
 	}
 
 	h := sha256.New()

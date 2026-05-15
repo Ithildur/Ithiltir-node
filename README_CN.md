@@ -60,7 +60,13 @@
 
 - 仅 Windows；不传参数时默认执行 `push`
 - 托管 `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`，工作目录为 `%ProgramData%\Ithiltir-node`
-- 启用 dashboard 指标响应里的 node 暂存更新；直接运行 `node push` 会忽略 update manifest
+- 在 Windows 上启用 dashboard 指标响应里的 node 暂存更新
+
+### 自更新
+
+- Windows 更新需要 runner（`ITHILTIR_NODE_RUNNER=1`），并替换 `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`
+- Linux 和 macOS 只在 `/var/lib/ithiltir-node/releases` 安装布局内自更新；node 下载新二进制，切换 `/var/lib/ithiltir-node/current`，干净退出并交给 systemd/launchd 重启
+- 安装布局外的直接二进制会忽略 update manifest
 
 ### Version
 
