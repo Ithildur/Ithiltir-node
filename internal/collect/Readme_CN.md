@@ -7,6 +7,7 @@
 - `io.go`：磁盘和网络速率
 - `nic*.go`：网卡筛选
 - `conn*.go`：TCP 和 UDP 连接数
+- `thermal.go`：温度传感器
 - `diskfilter*.go`：磁盘排序和过滤
 - `storage_linux.go`：Linux 慢路径入口
 - `storage_fs_linux.go`：文件系统使用量

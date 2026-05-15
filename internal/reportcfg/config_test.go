@@ -140,6 +140,9 @@ func TestLoadRejectsBadMode(t *testing.T) {
 	if err := os.WriteFile(path, []byte("version: 1\ntargets: []\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
 
 	if _, err := Load(path); err == nil {
 		t.Fatal("Load() error = nil, want bad mode error")

@@ -7,12 +7,13 @@ Code of record:
 
 ## Runtime: `metrics.disk`
 
-`metrics.disk` has four arrays:
+`metrics.disk` has four arrays and one SMART object:
 
 - `physical[]`
 - `logical[]`
 - `filesystems[]`
 - `base_io[]`
+- `smart`
 
 ### `physical[]`
 
@@ -72,6 +73,45 @@ IO view used for display and ranking.
   - `util_ratio`, `queue_length`, `wait_ms`, `service_ms`
 
 `logical` entries may omit cumulative bytes and low-level latency/utilization fields.
+
+### `smart`
+
+S.M.A.R.T. data is read from the root-side cache file. It is runtime state, not static hardware metadata.
+
+- required
+  - `status`
+  - `devices[]`
+- optional
+  - `updated_at`, `ttl_seconds`
+- `devices[]`
+  - required: `name`, `source`, `status`
+  - optional: `ref`, `device_path`, `device_type`, `protocol`, `model`, `serial`, `wwn`, `exit_status`, `health`, `temp_c`, `power_on_hours`, `lifetime_used_percent`, `critical_warning`, `failing_attrs[]`
+
+`devices[]` is always `[]`, not `null`. Unavailable SMART values are omitted.
+
+`critical_warning` is the raw NVMe critical warning bitset when available. `failing_attrs[]` contains ATA SMART attributes currently reported as failed:
+
+- `id`
+- `name`
+- `when_failed`
+
+Common `status` values:
+
+- `ok`
+- `partial`
+- `unsupported`
+- `not_found`
+- `no_permission`
+- `timeout`
+- `error`
+- `no_cache`
+- `stale`
+- `no_tool`
+- `standby`
+
+`status` is the collection state. `stale` means the last cache entry is expired but still returned. `health` is the disk health result. A disk can have `status=ok` and `health=failed`.
+
+`devices[].ref` points to `physical[].ref` or `logical[].ref` only when the device can be matched safely.
 
 ## Runtime: `metrics.raid`
 

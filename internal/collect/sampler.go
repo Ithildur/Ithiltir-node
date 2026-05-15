@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"Ithiltir-node/internal/metrics"
+	"Ithiltir-node/internal/smartcache"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/host"
@@ -23,6 +24,7 @@ type slowCache struct {
 	storages    []metrics.StorageUsage
 	raid        raidSnapshot
 	aliases     mapperAliases
+	smart       metrics.DiskSMART
 }
 
 type sysInfo struct {
@@ -51,6 +53,7 @@ type Sampler struct {
 	latest   *metrics.Snapshot
 	latestTS time.Time
 	slow     slowCache
+	thermal  metrics.Thermal
 
 	cpuInfo metrics.StaticCPUInfo
 	sys     sysInfo
@@ -222,6 +225,8 @@ func NewSampler(fastInterval time.Duration, slowOffset time.Duration, pushDelay 
 		usage:          newFSUsageReader(),
 		procCount:      procCountSample(),
 		version:        version,
+		slow:           slowCache{smart: smartcache.Default()},
+		thermal:        defaultThermal(),
 	}
 
 	s.refreshStatic()
@@ -292,6 +297,21 @@ func (s *Sampler) Start() {
 			}
 		}
 	}()
+
+	go func() {
+		interval := thermalInterval(s.fastInterval, s.mediumInterval)
+		s.collectThermal(ctx)
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				s.collectThermal(ctx)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 func (s *Sampler) Stop() {
@@ -308,6 +328,23 @@ func (s *Sampler) Stop() {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+func thermalInterval(fast, medium time.Duration) time.Duration {
+	if runtime.GOOS == "linux" {
+		return fast
+	}
+	return medium
+}
+
+func (s *Sampler) collectThermal(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	thermal := readThermal(ctx)
+
+	s.mu.Lock()
+	s.thermal = thermal
+	s.mu.Unlock()
 }
 
 func (s *Sampler) Snapshot() *metrics.Snapshot {
@@ -540,6 +577,7 @@ func buildRaid(raid raidSnapshot) metrics.Raid {
 
 func (s *Sampler) collectSlow() {
 	filesystems, storages, raid := collectSlowPlatform(thinpoolCachePath, s.cfg.Debug, s.usage)
+	smart := smartcache.Read(smartcache.DefaultPath(), time.Now().UTC())
 
 	sort.Slice(storages, func(i, j int) bool {
 		kindRank := func(k string) int {
@@ -573,6 +611,7 @@ func (s *Sampler) collectSlow() {
 	s.slow.storages = storages
 	s.slow.raid = raid
 	s.slow.aliases = aliases
+	s.slow.smart = smart
 	s.mu.Unlock()
 
 	if hasZFS(storages) {
@@ -645,7 +684,9 @@ func (s *Sampler) collectFast() {
 	slowFS := s.slow.filesystems
 	slowStor := s.slow.storages
 	slowRaid := s.slow.raid
+	slowSmart := s.slow.smart
 	aliases := s.slow.aliases
+	thermal := s.thermal
 	s.mu.RUnlock()
 
 	tcpCount, udpCount := countTCPUDP()
@@ -678,6 +719,18 @@ func (s *Sampler) collectFast() {
 	if netIO == nil {
 		netIO = []metrics.NetIO{}
 	}
+	if slowSmart.Status == "" {
+		slowSmart = smartcache.Default()
+	}
+	if slowSmart.Devices == nil {
+		slowSmart.Devices = []metrics.DiskSMARTDevice{}
+	}
+	if thermal.Status == "" {
+		thermal = defaultThermal()
+	}
+	if thermal.Sensors == nil {
+		thermal.Sensors = []metrics.ThermalSensor{}
+	}
 	if slowRaid.Arrays == nil {
 		slowRaid.Arrays = []raidArraySnapshot{}
 	}
@@ -706,6 +759,7 @@ func (s *Sampler) collectFast() {
 			Logical:     logical,
 			Filesystems: fsMetrics,
 			BaseIO:      baseIO,
+			SMART:       slowSmart,
 		},
 		Network: netIO,
 		System: metrics.System{
@@ -720,7 +774,8 @@ func (s *Sampler) collectFast() {
 			TCPCount: tcpCount,
 			UDPCount: udpCount,
 		},
-		Raid: buildRaid(slowRaid),
+		Raid:    buildRaid(slowRaid),
+		Thermal: thermal,
 	}
 
 	s.mu.Lock()

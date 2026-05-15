@@ -154,6 +154,13 @@ Top-level object: `NodeReport`
   - `supported`, `available`, `arrays[]`
   - `arrays[]`: `name`, `status`, `active`, `working`, `failed`, `health`, `members`, `sync_status?`, `sync_progress?`
   - `members[]`: `name`, `state`
+- `thermal`
+  - `status`, `sensors[]`
+  - optional: `updated_at`
+  - `sensors[]`: `kind`, `name`, `sensor_key`, `source`, `status`
+  - optional: `temp_c`, `high_c`, `critical_c`
+  - `kind`: `cpu`, `gpu`, `chipset`, `board`, `acpi`, or `unknown`
+  - `temp_c`, `high_c`, and `critical_c` are omitted when unavailable
 
 ## Static Payload
 

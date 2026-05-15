@@ -154,6 +154,13 @@ targets:
   - `supported`、`available`、`arrays[]`
   - `arrays[]`：`name`、`status`、`active`、`working`、`failed`、`health`、`members`、`sync_status?`、`sync_progress?`
   - `members[]`：`name`、`state`
+- `thermal`
+  - `status`、`sensors[]`
+  - 可选：`updated_at`
+  - `sensors[]`：`kind`、`name`、`sensor_key`、`source`、`status`
+  - 可选：`temp_c`、`high_c`、`critical_c`
+  - `kind`：`cpu`、`gpu`、`chipset`、`board`、`acpi` 或 `unknown`
+  - `temp_c`、`high_c`、`critical_c` 读不到时省略字段
 
 ## 静态结构
 

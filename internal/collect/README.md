@@ -7,6 +7,7 @@ Sampling and aggregation.
 - `io.go`: disk and network rates
 - `nic*.go`: NIC selection
 - `conn*.go`: TCP and UDP counts
+- `thermal.go`: temperature sensors
 - `diskfilter*.go`: disk ranking and filtering
 - `storage_linux.go`: Linux slow-path entry
 - `storage_fs_linux.go`: filesystem usage

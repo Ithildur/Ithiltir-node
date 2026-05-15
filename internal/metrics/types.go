@@ -7,6 +7,20 @@ import (
 
 // 约定：所有 `*Ratio` 字段均为 0~1 的比例值（ratio），不是 0~100。
 
+const (
+	StatusOK           = "ok"
+	StatusPartial      = "partial"
+	StatusUnsupported  = "unsupported"
+	StatusNotFound     = "not_found"
+	StatusNoPermission = "no_permission"
+	StatusTimeout      = "timeout"
+	StatusError        = "error"
+	StatusNoCache      = "no_cache"
+	StatusStale        = "stale"
+	StatusNoTool       = "no_tool"
+	StatusStandby      = "standby"
+)
+
 type CPUTimes struct {
 	User   float64 `json:"user"`
 	System float64 `json:"system"`
@@ -154,6 +168,40 @@ type Disk struct {
 	Logical     []DiskLogical    `json:"logical"`
 	Filesystems []DiskFilesystem `json:"filesystems"`
 	BaseIO      []DiskBaseIO     `json:"base_io"`
+	SMART       DiskSMART        `json:"smart"`
+}
+
+type DiskSMART struct {
+	Status     string            `json:"status"`
+	UpdatedAt  *time.Time        `json:"updated_at,omitempty"`
+	TTLSeconds int               `json:"ttl_seconds,omitempty"`
+	Devices    []DiskSMARTDevice `json:"devices"`
+}
+
+type DiskSMARTDevice struct {
+	Ref             string          `json:"ref,omitempty"`
+	Name            string          `json:"name"`
+	DevicePath      string          `json:"device_path,omitempty"`
+	DeviceType      string          `json:"device_type,omitempty"`
+	Protocol        string          `json:"protocol,omitempty"`
+	Model           string          `json:"model,omitempty"`
+	Serial          string          `json:"serial,omitempty"`
+	WWN             string          `json:"wwn,omitempty"`
+	Source          string          `json:"source"`
+	Status          string          `json:"status"`
+	ExitStatus      *int            `json:"exit_status,omitempty"`
+	Health          *string         `json:"health,omitempty"`
+	TempC           *float64        `json:"temp_c,omitempty"`
+	PowerOnHours    *uint64         `json:"power_on_hours,omitempty"`
+	LifetimeUsedPct *float64        `json:"lifetime_used_percent,omitempty"`
+	CriticalWarning *uint64         `json:"critical_warning,omitempty"`
+	FailingAttrs    []DiskSMARTAttr `json:"failing_attrs,omitempty"`
+}
+
+type DiskSMARTAttr struct {
+	ID         int    `json:"id,omitempty"`
+	Name       string `json:"name"`
+	WhenFailed string `json:"when_failed"`
 }
 
 type NetIO struct {
@@ -210,6 +258,23 @@ type Raid struct {
 	Arrays    []RaidArray `json:"arrays"`
 }
 
+type Thermal struct {
+	Status    string          `json:"status"`
+	UpdatedAt *time.Time      `json:"updated_at,omitempty"`
+	Sensors   []ThermalSensor `json:"sensors"`
+}
+
+type ThermalSensor struct {
+	Kind      string   `json:"kind"`
+	Name      string   `json:"name"`
+	SensorKey string   `json:"sensor_key"`
+	Source    string   `json:"source"`
+	Status    string   `json:"status"`
+	TempC     *float64 `json:"temp_c,omitempty"`
+	HighC     *float64 `json:"high_c,omitempty"`
+	CriticalC *float64 `json:"critical_c,omitempty"`
+}
+
 type Snapshot struct {
 	CPU         CPU         `json:"cpu"`
 	Memory      Memory      `json:"memory"`
@@ -219,6 +284,7 @@ type Snapshot struct {
 	Processes   Processes   `json:"processes"`
 	Connections Connections `json:"connections"`
 	Raid        Raid        `json:"raid"`
+	Thermal     Thermal     `json:"thermal"`
 }
 
 type NodeReport struct {
@@ -247,10 +313,28 @@ func (s *Snapshot) Clone() *Snapshot {
 	cloned.Disk.Logical = slices.Clone(s.Disk.Logical)
 	cloned.Disk.Filesystems = slices.Clone(s.Disk.Filesystems)
 	cloned.Disk.BaseIO = slices.Clone(s.Disk.BaseIO)
+	cloned.Disk.SMART = cloneDiskSMART(s.Disk.SMART)
 	cloned.Network = slices.Clone(s.Network)
 	cloned.Raid.Arrays = cloneRaidArrays(s.Raid.Arrays)
+	cloned.Thermal = cloneThermal(s.Thermal)
 
 	return &cloned
+}
+
+func cloneDiskSMART(in DiskSMART) DiskSMART {
+	out := in
+	out.UpdatedAt = clonePtr(in.UpdatedAt)
+	out.Devices = slices.Clone(in.Devices)
+	for i := range out.Devices {
+		out.Devices[i].ExitStatus = clonePtr(in.Devices[i].ExitStatus)
+		out.Devices[i].Health = clonePtr(in.Devices[i].Health)
+		out.Devices[i].TempC = clonePtr(in.Devices[i].TempC)
+		out.Devices[i].PowerOnHours = clonePtr(in.Devices[i].PowerOnHours)
+		out.Devices[i].LifetimeUsedPct = clonePtr(in.Devices[i].LifetimeUsedPct)
+		out.Devices[i].CriticalWarning = clonePtr(in.Devices[i].CriticalWarning)
+		out.Devices[i].FailingAttrs = slices.Clone(in.Devices[i].FailingAttrs)
+	}
+	return out
 }
 
 func cloneRaidArrays(in []RaidArray) []RaidArray {
@@ -259,6 +343,26 @@ func cloneRaidArrays(in []RaidArray) []RaidArray {
 		out[i].MemberStates = slices.Clone(in[i].MemberStates)
 	}
 	return out
+}
+
+func cloneThermal(in Thermal) Thermal {
+	out := in
+	out.UpdatedAt = clonePtr(in.UpdatedAt)
+	out.Sensors = slices.Clone(in.Sensors)
+	for i := range out.Sensors {
+		out.Sensors[i].TempC = clonePtr(in.Sensors[i].TempC)
+		out.Sensors[i].HighC = clonePtr(in.Sensors[i].HighC)
+		out.Sensors[i].CriticalC = clonePtr(in.Sensors[i].CriticalC)
+	}
+	return out
+}
+
+func clonePtr[T any](in *T) *T {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }
 
 func (r *NodeReport) Clone() *NodeReport {

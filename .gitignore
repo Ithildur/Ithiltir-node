@@ -19,6 +19,7 @@ build.md
 .DS_Store
 .codex/
 AGENTS.*
+TODO.*
 .codex
 
 # Config overrides
