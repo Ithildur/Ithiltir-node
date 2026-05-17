@@ -4,8 +4,18 @@ set -euo pipefail
 version=""
 use_git_tag="false"
 release_mode="false"
+release_notes=""
+release_notes_tmp=""
 goreleaser_version="v2.15.2"
 semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+
+cleanup() {
+  if [[ -n "${release_notes_tmp:-}" ]]; then
+    rm -f "$release_notes_tmp"
+  fi
+}
+
+trap cleanup EXIT
 
 validate_version() {
   local v="$1"
@@ -14,6 +24,11 @@ validate_version() {
     echo "正式发布: x.x.x 或 x.x.x+build；预发布: x.x.x-prerelease 或 x.x.x-prerelease+build" >&2
     return 1
   fi
+}
+
+is_prerelease_version() {
+  local main="${1%%+*}"
+  [[ "$main" == *-* ]]
 }
 
 package_local_build() {
@@ -73,6 +88,14 @@ while [[ $# -gt 0 ]]; do
       release_mode="true"
       shift
       ;;
+    --release-notes)
+      release_notes="${2:-}"
+      if [[ -z "$release_notes" ]]; then
+        echo "缺少 --release-notes 文件路径" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
     *)
       echo "unknown arg: $1" >&2
       exit 1
@@ -123,7 +146,16 @@ if ! command -v goreleaser >/dev/null 2>&1; then
 fi
 
 if [[ "$release_mode" == "true" ]]; then
-  goreleaser release --clean
+  if is_prerelease_version "$version"; then
+    goreleaser release --clean
+  else
+    if [[ -z "$release_notes" ]]; then
+      release_notes_tmp="$(mktemp)"
+      scripts/release_notes.sh "$version" "$release_notes_tmp"
+      release_notes="$release_notes_tmp"
+    fi
+    goreleaser release --clean --release-notes "$release_notes"
+  fi
 else
   goreleaser build --snapshot --clean
   if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
