@@ -14,6 +14,7 @@ import (
 
 	"Ithiltir-node/internal/metrics"
 	"Ithiltir-node/internal/reportcfg"
+	"Ithiltir-node/internal/selfupdate"
 )
 
 type fakeSource struct {
@@ -29,6 +30,55 @@ func (f *fakeSource) Time() time.Time             { return f.snapshotTime }
 func (f *fakeSource) PushDelay() time.Duration    { return f.pushDelay }
 func (f *fakeSource) Version() string             { return f.version }
 func (f *fakeSource) Hostname() string            { return f.hostname }
+
+func TestUpdatePlanIgnoresCurrentVersion(t *testing.T) {
+	current := &selfupdate.Manifest{
+		Version: "1.2.3",
+		URL:     "https://example.test/current",
+		SHA256:  "0000000000000000000000000000000000000000000000000000000000000000",
+		Size:    1,
+	}
+	next := &selfupdate.Manifest{
+		Version: "1.2.4",
+		URL:     "https://example.test/next",
+		SHA256:  "1111111111111111111111111111111111111111111111111111111111111111",
+		Size:    1,
+	}
+
+	var plan updatePlan
+	plan.add("1.2.3", current)
+	plan.add("1.2.3", next)
+
+	if plan.conflict {
+		t.Fatal("update plan conflicts when current-version manifest should be ignored")
+	}
+	if plan.manifest == nil || *plan.manifest != *next {
+		t.Fatalf("update plan manifest = %+v, want %+v", plan.manifest, next)
+	}
+}
+
+func TestUpdatePlanConflictsOnDifferentNewVersions(t *testing.T) {
+	first := &selfupdate.Manifest{
+		Version: "1.2.4",
+		URL:     "https://example.test/first",
+		SHA256:  "0000000000000000000000000000000000000000000000000000000000000000",
+		Size:    1,
+	}
+	second := &selfupdate.Manifest{
+		Version: "1.2.5",
+		URL:     "https://example.test/second",
+		SHA256:  "1111111111111111111111111111111111111111111111111111111111111111",
+		Size:    1,
+	}
+
+	var plan updatePlan
+	plan.add("1.2.3", first)
+	plan.add("1.2.3", second)
+
+	if !plan.conflict {
+		t.Fatal("update plan conflict = false, want true")
+	}
+}
 
 type fakeStaticSource struct {
 	*fakeSource

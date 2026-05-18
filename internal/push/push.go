@@ -168,13 +168,14 @@ func stopTimer(t *time.Timer) {
 }
 
 type agent struct {
-	source          nodeiface.PushSource
-	hostName        string
-	debug           bool
-	cache           *Cache
-	targets         []*target
-	roundErrLimiter logLimiter
-	staticWG        sync.WaitGroup
+	source           nodeiface.PushSource
+	hostName         string
+	debug            bool
+	cache            *Cache
+	targets          []*target
+	roundErrLimiter  logLimiter
+	staticWG         sync.WaitGroup
+	updateNoopLogged bool
 }
 
 type target struct {
@@ -591,6 +592,35 @@ type metricsResponse struct {
 	Update *selfupdate.Manifest `json:"update"`
 }
 
+func sameNodeVersion(updateVersion, currentVersion string) bool {
+	updateVersion = strings.TrimSpace(updateVersion)
+	currentVersion = strings.TrimSpace(currentVersion)
+	return updateVersion != "" && updateVersion == currentVersion
+}
+
+type updatePlan struct {
+	manifest       *selfupdate.Manifest
+	conflict       bool
+	skippedCurrent bool
+}
+
+func (p *updatePlan) add(currentVersion string, manifest *selfupdate.Manifest) {
+	if manifest == nil {
+		return
+	}
+	if sameNodeVersion(manifest.Version, currentVersion) {
+		p.skippedCurrent = true
+		return
+	}
+	if p.manifest == nil {
+		p.manifest = manifest
+		return
+	}
+	if *p.manifest != *manifest {
+		p.conflict = true
+	}
+}
+
 func (s *delivery) handleResponse(resp *http.Response, target *target, debug bool) (bool, bool, *selfupdate.Manifest) {
 	defer drainBody(resp)
 
@@ -715,8 +745,8 @@ func (a *agent) sendRound(ctx context.Context) error {
 	close(results)
 
 	success := false
-	var manifest *selfupdate.Manifest
-	conflict := false
+	var update updatePlan
+	currentVersion := report.Version
 	for result := range results {
 		if result.err != nil {
 			if ctx.Err() != nil {
@@ -725,23 +755,19 @@ func (a *agent) sendRound(ctx context.Context) error {
 			return result.err
 		}
 		success = success || result.ok
-		if result.manifest == nil {
-			continue
-		}
-		if manifest == nil {
-			manifest = result.manifest
-			continue
-		}
-		if *manifest != *result.manifest {
-			conflict = true
-		}
+		update.add(currentVersion, result.manifest)
 	}
-	if conflict {
+	if update.conflict {
 		a.roundErrLimiter.logf("push update skipped: conflicting manifests in one round")
-	} else if manifest != nil {
-		if err := selfupdate.Apply(ctx, *manifest); err != nil {
+	} else if update.skippedCurrent && update.manifest == nil {
+		if !a.updateNoopLogged {
+			log.Printf("push update skipped: version=%s already active", strings.TrimSpace(currentVersion))
+			a.updateNoopLogged = true
+		}
+	} else if update.manifest != nil {
+		if err := selfupdate.Apply(ctx, *update.manifest); err != nil {
 			if errors.Is(err, selfupdate.ErrRestart) {
-				log.Printf("node update staged: version=%s", manifest.Version)
+				log.Printf("node update staged: version=%s", update.manifest.Version)
 				return selfupdate.ErrRestart
 			}
 			a.roundErrLimiter.logf("push update failed: %v", err)
