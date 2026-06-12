@@ -235,6 +235,25 @@ type Connections struct {
 	UDPCount int `json:"udp_count"`
 }
 
+type PressureStats struct {
+	Avg10  float64 `json:"avg10"`
+	Avg60  float64 `json:"avg60"`
+	Avg300 float64 `json:"avg300"`
+	Total  uint64  `json:"total"`
+}
+
+type PressureResource struct {
+	Status string         `json:"status"`
+	Some   *PressureStats `json:"some,omitempty"`
+	Full   *PressureStats `json:"full,omitempty"`
+}
+
+type Pressure struct {
+	CPU    PressureResource `json:"cpu"`
+	Memory PressureResource `json:"memory"`
+	IO     PressureResource `json:"io"`
+}
+
 type RaidMember struct {
 	Name  string `json:"name"`
 	State string `json:"state"` // up/down/unknown
@@ -283,6 +302,7 @@ type Snapshot struct {
 	System      System      `json:"system"`
 	Processes   Processes   `json:"processes"`
 	Connections Connections `json:"connections"`
+	Pressure    Pressure    `json:"pressure"`
 	Raid        Raid        `json:"raid"`
 	Thermal     Thermal     `json:"thermal"`
 }
@@ -317,6 +337,7 @@ func (s *Snapshot) Clone() *Snapshot {
 	cloned.Network = slices.Clone(s.Network)
 	cloned.Raid.Arrays = cloneRaidArrays(s.Raid.Arrays)
 	cloned.Thermal = cloneThermal(s.Thermal)
+	cloned.Pressure = clonePressure(s.Pressure)
 
 	return &cloned
 }
@@ -354,6 +375,21 @@ func cloneThermal(in Thermal) Thermal {
 		out.Sensors[i].HighC = clonePtr(in.Sensors[i].HighC)
 		out.Sensors[i].CriticalC = clonePtr(in.Sensors[i].CriticalC)
 	}
+	return out
+}
+
+func clonePressure(in Pressure) Pressure {
+	out := in
+	out.CPU = clonePressureResource(in.CPU)
+	out.Memory = clonePressureResource(in.Memory)
+	out.IO = clonePressureResource(in.IO)
+	return out
+}
+
+func clonePressureResource(in PressureResource) PressureResource {
+	out := in
+	out.Some = clonePtr(in.Some)
+	out.Full = clonePtr(in.Full)
 	return out
 }
 

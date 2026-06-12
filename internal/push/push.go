@@ -25,7 +25,11 @@ import (
 	"Ithiltir-node/internal/selfupdate"
 )
 
-var staticRetryDelay = 10 * time.Second
+var (
+	staticRetryDelay             = 10 * time.Second
+	staticChangeCheckMinInterval = 10 * time.Second
+	staticChangeCheckMaxInterval = time.Minute
+)
 
 type logLimiter struct {
 	cooldown time.Duration
@@ -175,6 +179,9 @@ type agent struct {
 	targets          []*target
 	roundErrLimiter  logLimiter
 	staticWG         sync.WaitGroup
+	staticMu         sync.Mutex
+	staticFP         [32]byte
+	staticFPSet      bool
 	updateNoopLogged bool
 }
 
@@ -366,12 +373,12 @@ func (s *staticSync) send(ctx context.Context, target *target, endpoint string, 
 	return nil
 }
 
-func (s *staticSync) run(ctx context.Context, target *target, debug bool) {
+func (s *staticSync) run(ctx context.Context, target *target, debug bool, recordStatic func(*metrics.Static)) {
 	if s.source == nil {
 		return
 	}
 
-	retry := s.sync(ctx, target, debug, "startup")
+	retry := s.sync(ctx, target, debug, "startup", recordStatic)
 	for {
 		var retryCh <-chan time.Time
 		var retryTimer *time.Timer
@@ -383,9 +390,9 @@ func (s *staticSync) run(ctx context.Context, target *target, debug bool) {
 		select {
 		case reason := <-target.staticWake:
 			stopTimer(retryTimer)
-			retry = s.sync(ctx, target, debug, reason)
+			retry = s.sync(ctx, target, debug, reason, recordStatic)
 		case <-retryCh:
-			retry = s.sync(ctx, target, debug, "fallback")
+			retry = s.sync(ctx, target, debug, "fallback", recordStatic)
 		case <-ctx.Done():
 			stopTimer(retryTimer)
 			return
@@ -393,7 +400,7 @@ func (s *staticSync) run(ctx context.Context, target *target, debug bool) {
 	}
 }
 
-func (s *staticSync) sync(ctx context.Context, target *target, debug bool, reason string) bool {
+func (s *staticSync) sync(ctx context.Context, target *target, debug bool, reason string, recordStatic func(*metrics.Static)) bool {
 	snap, state, missing, err := s.prepare()
 	if err != nil {
 		s.errLimiter.logf("push static error target=%d (%s): %v", target.id, reason, err)
@@ -417,7 +424,37 @@ func (s *staticSync) sync(ctx context.Context, target *target, debug bool, reaso
 		}
 	}
 
+	if err == nil && recordStatic != nil {
+		recordStatic(snap)
+	}
 	return err != nil || state != staticComplete
+}
+
+func staticChangeCheckInterval(reportInterval time.Duration) time.Duration {
+	if reportInterval <= 0 {
+		return staticChangeCheckMaxInterval
+	}
+
+	minInterval := staticChangeCheckMinInterval
+	maxInterval := staticChangeCheckMaxInterval
+	if minInterval <= 0 {
+		minInterval = time.Second
+	}
+	if maxInterval <= 0 {
+		maxInterval = time.Minute
+	}
+	if maxInterval < minInterval {
+		maxInterval = minInterval
+	}
+
+	interval := reportInterval * 20
+	if interval < minInterval {
+		return minInterval
+	}
+	if interval > maxInterval {
+		return maxInterval
+	}
+	return interval
 }
 
 type delivery struct {
@@ -685,17 +722,19 @@ func start(ctx context.Context, specs []reportcfg.Target, interval time.Duration
 	if err != nil {
 		return err
 	}
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
 	defer agent.waitStatic()
 
 	if d := s.PushDelay(); d > 0 {
 		select {
 		case <-time.After(d):
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-runCtx.Done():
+			return runCtx.Err()
 		}
 	}
 
-	agent.startStatic(ctx)
+	agent.startStatic(runCtx, interval)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -703,11 +742,11 @@ func start(ctx context.Context, specs []reportcfg.Target, interval time.Duration
 	for {
 		select {
 		case <-ticker.C:
-			if err := agent.sendRound(ctx); err != nil {
+			if err := agent.sendRound(runCtx); err != nil {
 				return err
 			}
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-runCtx.Done():
+			return runCtx.Err()
 		}
 	}
 }
@@ -799,22 +838,115 @@ func (a *agent) sendTarget(ctx context.Context, target *target, body []byte) (bo
 	return ok, manifest, nil
 }
 
-func (a *agent) startStatic(ctx context.Context) {
+func (a *agent) startStatic(ctx context.Context, interval time.Duration) {
+	hasStatic := false
 	for _, target := range a.targets {
 		if target.static.source == nil {
 			continue
 		}
+		hasStatic = true
 		target := target
 		a.staticWG.Add(1)
 		go func() {
 			defer a.staticWG.Done()
-			target.static.run(ctx, target, a.debug)
+			target.static.run(ctx, target, a.debug, a.recordStaticFingerprint)
 		}()
 	}
+	if !hasStatic {
+		return
+	}
+
+	a.staticWG.Add(1)
+	go func() {
+		defer a.staticWG.Done()
+		a.watchStaticChanges(ctx, staticChangeCheckInterval(interval))
+	}()
 }
 
 func (a *agent) waitStatic() {
 	a.staticWG.Wait()
+}
+
+func (a *agent) staticSource() nodeiface.StaticSource {
+	for _, target := range a.targets {
+		if target.static == nil || target.static.source == nil {
+			continue
+		}
+		return target.static.source
+	}
+	return nil
+}
+
+func (a *agent) recordStaticFingerprint(snap *metrics.Static) {
+	fp, ok, err := staticFingerprint(snap)
+	if err != nil {
+		a.roundErrLimiter.logf("static fingerprint error: %v", err)
+		return
+	}
+	if !ok {
+		return
+	}
+
+	a.staticMu.Lock()
+	a.staticFP = fp
+	a.staticFPSet = true
+	a.staticMu.Unlock()
+}
+
+func (a *agent) staticChanged() (bool, error) {
+	source := a.staticSource()
+	if source == nil {
+		return false, nil
+	}
+
+	fp, ok, err := staticFingerprint(source.Static())
+	if err != nil || !ok {
+		return false, err
+	}
+
+	a.staticMu.Lock()
+	defer a.staticMu.Unlock()
+	if !a.staticFPSet {
+		a.staticFP = fp
+		a.staticFPSet = true
+		return false, nil
+	}
+	if a.staticFP == fp {
+		return false, nil
+	}
+	a.staticFP = fp
+	return true, nil
+}
+
+func (a *agent) wakeStatic(reason string) {
+	for _, target := range a.targets {
+		target.wakeStatic(reason)
+	}
+}
+
+func (a *agent) watchStaticChanges(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = staticChangeCheckMaxInterval
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			changed, err := a.staticChanged()
+			if err != nil {
+				a.roundErrLimiter.logf("static change check failed: %v", err)
+				continue
+			}
+			if changed {
+				a.wakeStatic("static_changed")
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func sendStatic(ctx context.Context, client *http.Client, endpoint, secret string, snap *metrics.Static) error {

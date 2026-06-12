@@ -115,6 +115,42 @@ func validStatic() *metrics.Static {
 	}
 }
 
+func TestStaticFingerprintIgnoresTimestamp(t *testing.T) {
+	first := validStatic()
+	second := validStatic()
+	second.Timestamp = first.Timestamp.Add(time.Hour)
+
+	firstFP, ok, err := staticFingerprint(first)
+	if err != nil {
+		t.Fatalf("staticFingerprint(first) error = %v", err)
+	}
+	if !ok {
+		t.Fatal("staticFingerprint(first) ok = false, want true")
+	}
+	secondFP, ok, err := staticFingerprint(second)
+	if err != nil {
+		t.Fatalf("staticFingerprint(second) error = %v", err)
+	}
+	if !ok {
+		t.Fatal("staticFingerprint(second) ok = false, want true")
+	}
+	if firstFP != secondFP {
+		t.Fatal("static fingerprint changed when only timestamp changed")
+	}
+
+	second.Disk.Physical = []metrics.StaticDiskPhysical{{Name: "sdb"}}
+	changedFP, ok, err := staticFingerprint(second)
+	if err != nil {
+		t.Fatalf("staticFingerprint(changed) error = %v", err)
+	}
+	if !ok {
+		t.Fatal("staticFingerprint(changed) ok = false, want true")
+	}
+	if firstFP == changedFP {
+		t.Fatal("static fingerprint did not change after disk topology changed")
+	}
+}
+
 func newIPv4Server(t *testing.T, handler http.Handler) (*httptest.Server, string, string) {
 	t.Helper()
 
@@ -141,6 +177,89 @@ func testTargets(host, port, secret string) []reportcfg.Target {
 		URL: "https://" + net.JoinHostPort(host, port) + "/api/node/metrics",
 		Key: secret,
 	}}
+}
+
+func TestStartPushAgentResendsStaticWhenSnapshotChanges(t *testing.T) {
+	oldMinInterval := staticChangeCheckMinInterval
+	oldMaxInterval := staticChangeCheckMaxInterval
+	defer func() {
+		staticChangeCheckMinInterval = oldMinInterval
+		staticChangeCheckMaxInterval = oldMaxInterval
+	}()
+	staticChangeCheckMinInterval = 20 * time.Millisecond
+	staticChangeCheckMaxInterval = 20 * time.Millisecond
+
+	var expanded atomic.Bool
+	var staticPosts atomic.Int32
+	done := make(chan struct{}, 1)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/node/static":
+			staticPosts.Add(1)
+			var snap metrics.Static
+			if err := json.NewDecoder(r.Body).Decode(&snap); err != nil {
+				t.Errorf("decode static request: %v", err)
+				break
+			}
+			if len(snap.Disk.Physical) == 1 {
+				expanded.Store(true)
+			}
+			if len(snap.Disk.Physical) == 2 {
+				select {
+				case done <- struct{}{}:
+				default:
+				}
+			}
+		case "/api/node/metrics":
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	_, host, port := newIPv4Server(t, handler)
+
+	snapshotter := &fakeStaticSource{
+		fakeSource: &fakeSource{
+			snapshot:     &metrics.Snapshot{System: metrics.System{Alive: true}},
+			snapshotTime: time.Now().UTC(),
+			version:      "1.0.0",
+			hostname:     "node-1",
+		},
+		staticFn: func() *metrics.Static {
+			snap := validStatic()
+			snap.Disk.Physical = []metrics.StaticDiskPhysical{{Name: "sda"}}
+			if expanded.Load() {
+				snap.Disk.Physical = append(snap.Disk.Physical, metrics.StaticDiskPhysical{Name: "sdb"})
+			}
+			return snap
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- start(ctx, testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
+	}()
+
+	select {
+	case <-done:
+		cancel()
+	case <-time.After(2 * time.Second):
+		t.Fatal("static snapshot change did not trigger another static post")
+	}
+
+	err := <-errCh
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("start() error = %v, want context.Canceled", err)
+	}
+	if got := staticPosts.Load(); got < 2 {
+		t.Fatalf("static posts = %d, want at least 2", got)
+	}
 }
 
 func TestStartPushAgentRetriesStaticWhileMetricsContinue(t *testing.T) {

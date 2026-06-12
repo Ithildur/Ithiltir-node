@@ -690,6 +690,7 @@ func (s *Sampler) collectFast() {
 	s.mu.RUnlock()
 
 	tcpCount, udpCount := countTCPUDP()
+	pressure := readPressure()
 
 	physical := buildPhysical(diskIO)
 	filesystems := filterFilesystems(slowFS, aliases)
@@ -774,8 +775,9 @@ func (s *Sampler) collectFast() {
 			TCPCount: tcpCount,
 			UDPCount: udpCount,
 		},
-		Raid:    buildRaid(slowRaid),
-		Thermal: thermal,
+		Pressure: pressure,
+		Raid:     buildRaid(slowRaid),
+		Thermal:  thermal,
 	}
 
 	s.mu.Lock()

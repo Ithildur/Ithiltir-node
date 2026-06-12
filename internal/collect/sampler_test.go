@@ -14,6 +14,8 @@ func TestSnapshotReturnsDeepCopy(t *testing.T) {
 	health := "passed"
 	criticalWarning := uint64(0x0e)
 	thermalTempC := 51.0
+	cpuPressure := metrics.PressureStats{Avg10: 1.25, Avg60: 0.5, Avg300: 0.1, Total: 123}
+	memoryPressure := metrics.PressureStats{Avg10: 2.5, Avg60: 1.5, Avg300: 0.5, Total: 456}
 	s.mu.Lock()
 	s.latest = &metrics.Snapshot{
 		System:  metrics.System{Alive: true, Uptime: "1d 0h 0m"},
@@ -39,6 +41,16 @@ func TestSnapshotReturnsDeepCopy(t *testing.T) {
 		Raid: metrics.Raid{
 			Arrays: []metrics.RaidArray{
 				{Name: "md0", MemberStates: []metrics.RaidMember{{Name: "sda", State: "up"}}},
+			},
+		},
+		Pressure: metrics.Pressure{
+			CPU: metrics.PressureResource{
+				Status: metrics.StatusOK,
+				Some:   &cpuPressure,
+			},
+			Memory: metrics.PressureResource{
+				Status: metrics.StatusOK,
+				Full:   &memoryPressure,
 			},
 		},
 		Thermal: metrics.Thermal{
@@ -67,6 +79,8 @@ func TestSnapshotReturnsDeepCopy(t *testing.T) {
 	*got.Disk.SMART.Devices[0].CriticalWarning = 0
 	got.Disk.SMART.Devices[0].FailingAttrs[0].WhenFailed = ""
 	got.Raid.Arrays[0].MemberStates[0].Name = "bad-member"
+	*got.Pressure.CPU.Some = metrics.PressureStats{}
+	*got.Pressure.Memory.Full = metrics.PressureStats{}
 	got.Thermal.Sensors[0].Name = "mutated-thermal"
 	*got.Thermal.UpdatedAt = got.Thermal.UpdatedAt.Add(time.Hour)
 	*got.Thermal.Sensors[0].TempC = 99
@@ -98,6 +112,12 @@ func TestSnapshotReturnsDeepCopy(t *testing.T) {
 	}
 	if again.Raid.Arrays[0].MemberStates[0].Name != "sda" {
 		t.Fatalf("Snapshot() leaked raid member mutation, got %q", again.Raid.Arrays[0].MemberStates[0].Name)
+	}
+	if again.Pressure.CPU.Some == nil || again.Pressure.CPU.Some.Total != 123 {
+		t.Fatalf("Snapshot() leaked CPU pressure mutation, got %+v", again.Pressure.CPU.Some)
+	}
+	if again.Pressure.Memory.Full == nil || again.Pressure.Memory.Full.Total != 456 {
+		t.Fatalf("Snapshot() leaked memory pressure mutation, got %+v", again.Pressure.Memory.Full)
 	}
 	if again.Thermal.Sensors[0].Name != "coretemp" {
 		t.Fatalf("Snapshot() leaked thermal mutation, got %q", again.Thermal.Sensors[0].Name)

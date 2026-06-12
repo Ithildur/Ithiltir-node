@@ -150,6 +150,10 @@ Top-level object: `NodeReport`
   - `process_count`
 - `connections`
   - `tcp_count`, `udp_count`
+- `pressure`
+  - `cpu`, `memory`, `io`
+  - each resource has `status` and optional `some`, `full`
+  - `some` / `full`: `avg10`, `avg60`, `avg300`, `total`
 - `raid`
   - `supported`, `available`, `arrays[]`
   - `arrays[]`: `name`, `status`, `active`, `working`, `failed`, `health`, `members`, `sync_status?`, `sync_progress?`
@@ -183,7 +187,7 @@ Static push behavior:
 
 - Static metadata has no outer wrapper object.
 - `report_interval_seconds` is required.
-- Static metadata is posted once on startup.
+- Static metadata is posted on startup and posted again when the static snapshot changes.
 - Partial static collection is retried until complete.
 - Static metadata is sent again after a suppressed push failure recovers.
 

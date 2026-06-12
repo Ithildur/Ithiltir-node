@@ -150,6 +150,10 @@ targets:
   - `process_count`
 - `connections`
   - `tcp_count`、`udp_count`
+- `pressure`
+  - `cpu`、`memory`、`io`
+  - 每个资源包含 `status`，以及可选的 `some`、`full`
+  - `some` / `full`：`avg10`、`avg60`、`avg300`、`total`
 - `raid`
   - `supported`、`available`、`arrays[]`
   - `arrays[]`：`name`、`status`、`active`、`working`、`failed`、`health`、`members`、`sync_status?`、`sync_progress?`
@@ -183,7 +187,7 @@ targets:
 
 - 静态元数据没有外层包装对象。
 - `report_interval_seconds` 是必填字段。
-- 静态元数据会在启动时上报一次。
+- 静态元数据会在启动时上报，并在静态快照变化时再次上报。
 - 静态采集不完整时继续重试，直到完整。
 - 被抑制的 push 失败恢复后，静态元数据会再补发一次。
 
