@@ -29,6 +29,7 @@ var (
 	staticRetryDelay             = 10 * time.Second
 	staticChangeCheckMinInterval = 10 * time.Second
 	staticChangeCheckMaxInterval = time.Minute
+	applyUpdate                  = selfupdate.Apply
 )
 
 type logLimiter struct {
@@ -723,8 +724,10 @@ func start(ctx context.Context, specs []reportcfg.Target, interval time.Duration
 		return err
 	}
 	runCtx, stop := context.WithCancel(ctx)
-	defer stop()
-	defer agent.waitStatic()
+	defer func() {
+		stop()
+		agent.waitStatic()
+	}()
 
 	if d := s.PushDelay(); d > 0 {
 		select {
@@ -804,7 +807,7 @@ func (a *agent) sendRound(ctx context.Context) error {
 			a.updateNoopLogged = true
 		}
 	} else if update.manifest != nil {
-		if err := selfupdate.Apply(ctx, *update.manifest); err != nil {
+		if err := applyUpdate(ctx, *update.manifest); err != nil {
 			if errors.Is(err, selfupdate.ErrRestart) {
 				log.Printf("node update staged: version=%s", update.manifest.Version)
 				return selfupdate.ErrRestart

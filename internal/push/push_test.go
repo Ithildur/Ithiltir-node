@@ -368,6 +368,68 @@ func TestStartPushAgentRetriesStaticWhileMetricsContinue(t *testing.T) {
 	}
 }
 
+func TestStartPushAgentReturnsRestartWithStaticSync(t *testing.T) {
+	oldApply := applyUpdate
+	defer func() { applyUpdate = oldApply }()
+
+	var applyCalled atomic.Bool
+	applyUpdate = func(context.Context, selfupdate.Manifest) error {
+		applyCalled.Store(true)
+		return selfupdate.ErrRestart
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/node/static":
+			w.WriteHeader(http.StatusOK)
+		case "/api/node/metrics":
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(metricsResponse{
+				OK: true,
+				Update: &selfupdate.Manifest{
+					Version: "1.0.1",
+					URL:     "https://example.test/node",
+					SHA256:  "0000000000000000000000000000000000000000000000000000000000000000",
+					Size:    1,
+				},
+			}); err != nil {
+				t.Errorf("encode metrics response: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	_, host, port := newIPv4Server(t, handler)
+
+	snapshotter := &fakeStaticSource{
+		fakeSource: &fakeSource{
+			snapshot:     &metrics.Snapshot{System: metrics.System{Alive: true}},
+			snapshotTime: time.Now().UTC(),
+			version:      "1.0.0",
+			hostname:     "node-1",
+		},
+		staticFn: validStatic,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- start(context.Background(), testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
+	}()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, selfupdate.ErrRestart) {
+			t.Fatalf("start() error = %v, want ErrRestart", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("start() did not return after update restart")
+	}
+	if !applyCalled.Load() {
+		t.Fatal("applyUpdate was not called")
+	}
+}
+
 func TestStartPushAgentKeepsRunningAfterTarget422(t *testing.T) {
 	var metricsPosts atomic.Int32
 
