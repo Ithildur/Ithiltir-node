@@ -81,6 +81,40 @@ func TestStageWindowsWritesStagedFiles(t *testing.T) {
 	}
 }
 
+func TestDownloadSendsNodeSecret(t *testing.T) {
+	body := []byte("node binary")
+	sum := sha256.Sum256(body)
+	gotSecret := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case gotSecret <- r.Header.Get(nodeSecretHeader):
+		default:
+		}
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	path := filepath.Join(t.TempDir(), "node")
+	err := download(context.Background(), Manifest{
+		URL:    srv.URL,
+		SHA256: hex.EncodeToString(sum[:]),
+		Size:   int64(len(body)),
+		Secret: "node-secret",
+	}, path, 0o755)
+	if err != nil {
+		t.Fatalf("download() error = %v", err)
+	}
+
+	select {
+	case got := <-gotSecret:
+		if got != "node-secret" {
+			t.Fatalf("%s = %q, want node-secret", nodeSecretHeader, got)
+		}
+	default:
+		t.Fatalf("server did not receive %s", nodeSecretHeader)
+	}
+}
+
 func TestStageWindowsClearsOldStagingBeforeDownload(t *testing.T) {
 	home := t.TempDir()
 	if err := os.MkdirAll(stagingDir(home), 0o700); err != nil {

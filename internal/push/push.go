@@ -642,7 +642,7 @@ type updatePlan struct {
 	skippedCurrent bool
 }
 
-func (p *updatePlan) add(currentVersion string, manifest *selfupdate.Manifest) {
+func (p *updatePlan) add(currentVersion string, manifest *selfupdate.Manifest, secret string) {
 	if manifest == nil {
 		return
 	}
@@ -651,12 +651,25 @@ func (p *updatePlan) add(currentVersion string, manifest *selfupdate.Manifest) {
 		return
 	}
 	if p.manifest == nil {
-		p.manifest = manifest
+		selected := *manifest
+		selected.Secret = strings.TrimSpace(secret)
+		p.manifest = &selected
 		return
 	}
-	if *p.manifest != *manifest {
+	if !sameUpdateManifest(p.manifest, manifest) {
 		p.conflict = true
 	}
+}
+
+func sameUpdateManifest(a, b *selfupdate.Manifest) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.ID == b.ID &&
+		a.Version == b.Version &&
+		a.URL == b.URL &&
+		a.SHA256 == b.SHA256 &&
+		a.Size == b.Size
 }
 
 func (s *delivery) handleResponse(resp *http.Response, target *target, debug bool) (bool, bool, *selfupdate.Manifest) {
@@ -758,6 +771,7 @@ type targetResult struct {
 	ok       bool
 	manifest *selfupdate.Manifest
 	err      error
+	secret   string
 }
 
 func (a *agent) sendRound(ctx context.Context) error {
@@ -780,7 +794,7 @@ func (a *agent) sendRound(ctx context.Context) error {
 		go func() {
 			defer wg.Done()
 			ok, manifest, err := a.sendTarget(ctx, target, body)
-			results <- targetResult{ok: ok, manifest: manifest, err: err}
+			results <- targetResult{ok: ok, manifest: manifest, err: err, secret: target.secret}
 		}()
 	}
 	wg.Wait()
@@ -797,7 +811,7 @@ func (a *agent) sendRound(ctx context.Context) error {
 			return result.err
 		}
 		success = success || result.ok
-		update.add(currentVersion, result.manifest)
+		update.add(currentVersion, result.manifest, result.secret)
 	}
 	if update.conflict {
 		a.roundErrLimiter.logf("push update skipped: conflicting manifests in one round")
@@ -848,7 +862,6 @@ func (a *agent) startStatic(ctx context.Context, interval time.Duration) {
 			continue
 		}
 		hasStatic = true
-		target := target
 		a.staticWG.Add(1)
 		go func() {
 			defer a.staticWG.Done()

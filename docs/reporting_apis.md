@@ -82,6 +82,7 @@ Response handling:
 - Other top-level JSON fields are ignored; `ok` is not required.
 - `update.version`, `update.url`, `update.sha256`, and positive byte `update.size` are required when `update` is present. `update.id` is optional metadata.
 - `update.url` must be an absolute `http` or `https` URL with a host. `update.version` must be a single release directory name, not `.` or `..`, and must not contain path separators. `update.sha256` is the expected SHA-256 hex digest, and `update.size` must equal the downloaded byte count.
+- When downloading `update.url`, the node sends the current target key as `X-Node-Secret`. Do not put the key in the URL or query string.
 - Windows self-updates require the Windows runner (`ITHILTIR_NODE_RUNNER=1`). Linux and macOS self-updates require the installed release layout under `/var/lib/ithiltir-node/releases`. Direct binaries outside the installed layout ignore update manifests.
 - Manifests whose `version` matches the node's current reported version are ignored before conflict checks. If multiple remaining targets return update manifests in the same round, all returned manifests must match by `id`, `version`, `url`, `sha256`, and `size`; conflicting manifests are skipped.
 - A staged update makes `node push` exit cleanly. The Windows runner verifies the staged file, replaces `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`, and restarts the node. Linux and macOS switch `/var/lib/ithiltir-node/current` to the downloaded release and rely on systemd/launchd to restart the node.

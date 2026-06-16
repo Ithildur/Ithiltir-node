@@ -23,8 +23,9 @@ var (
 )
 
 const (
-	RunnerEnv = "ITHILTIR_NODE_RUNNER"
-	nodeName  = "ithiltir-node"
+	RunnerEnv        = "ITHILTIR_NODE_RUNNER"
+	nodeName         = "ithiltir-node"
+	nodeSecretHeader = "X-Node-Secret"
 )
 
 type Manifest struct {
@@ -33,6 +34,8 @@ type Manifest struct {
 	URL     string `json:"url"`
 	SHA256  string `json:"sha256"`
 	Size    int64  `json:"size"`
+	// Secret is the current target key used only for authenticated asset downloads.
+	Secret string `json:"-"`
 }
 
 func Apply(ctx context.Context, m Manifest) error {
@@ -353,6 +356,9 @@ func download(ctx context.Context, m Manifest, path string, mode os.FileMode) er
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(m.URL), nil)
 	if err != nil {
 		return fmt.Errorf("build update request: %w", err)
+	}
+	if secret := strings.TrimSpace(m.Secret); secret != "" {
+		req.Header.Set(nodeSecretHeader, secret)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

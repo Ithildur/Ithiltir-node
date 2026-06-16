@@ -46,14 +46,17 @@ func TestUpdatePlanIgnoresCurrentVersion(t *testing.T) {
 	}
 
 	var plan updatePlan
-	plan.add("1.2.3", current)
-	plan.add("1.2.3", next)
+	plan.add("1.2.3", current, "current-secret")
+	plan.add("1.2.3", next, "next-secret")
 
 	if plan.conflict {
 		t.Fatal("update plan conflicts when current-version manifest should be ignored")
 	}
-	if plan.manifest == nil || *plan.manifest != *next {
+	if plan.manifest == nil || !sameUpdateManifest(plan.manifest, next) {
 		t.Fatalf("update plan manifest = %+v, want %+v", plan.manifest, next)
+	}
+	if plan.manifest.Secret != "next-secret" {
+		t.Fatalf("update plan secret = %q, want next-secret", plan.manifest.Secret)
 	}
 }
 
@@ -72,11 +75,35 @@ func TestUpdatePlanConflictsOnDifferentNewVersions(t *testing.T) {
 	}
 
 	var plan updatePlan
-	plan.add("1.2.3", first)
-	plan.add("1.2.3", second)
+	plan.add("1.2.3", first, "first-secret")
+	plan.add("1.2.3", second, "second-secret")
 
 	if !plan.conflict {
 		t.Fatal("update plan conflict = false, want true")
+	}
+}
+
+func TestUpdatePlanIgnoresSecretForConflict(t *testing.T) {
+	first := &selfupdate.Manifest{
+		Version: "1.2.4",
+		URL:     "https://example.test/node",
+		SHA256:  "0000000000000000000000000000000000000000000000000000000000000000",
+		Size:    1,
+	}
+	second := *first
+
+	var plan updatePlan
+	plan.add("1.2.3", first, "first-secret")
+	plan.add("1.2.3", &second, "second-secret")
+
+	if plan.conflict {
+		t.Fatal("update plan conflict = true, want false")
+	}
+	if plan.manifest == nil || !sameUpdateManifest(plan.manifest, first) {
+		t.Fatalf("update plan manifest = %+v, want %+v", plan.manifest, first)
+	}
+	if plan.manifest.Secret != "first-secret" {
+		t.Fatalf("update plan secret = %q, want first-secret", plan.manifest.Secret)
 	}
 }
 
@@ -373,8 +400,10 @@ func TestStartPushAgentReturnsRestartWithStaticSync(t *testing.T) {
 	defer func() { applyUpdate = oldApply }()
 
 	var applyCalled atomic.Bool
-	applyUpdate = func(context.Context, selfupdate.Manifest) error {
+	var gotSecret atomic.Value
+	applyUpdate = func(_ context.Context, m selfupdate.Manifest) error {
 		applyCalled.Store(true)
+		gotSecret.Store(m.Secret)
 		return selfupdate.ErrRestart
 	}
 
@@ -427,6 +456,9 @@ func TestStartPushAgentReturnsRestartWithStaticSync(t *testing.T) {
 	}
 	if !applyCalled.Load() {
 		t.Fatal("applyUpdate was not called")
+	}
+	if got, _ := gotSecret.Load().(string); got != "secret" {
+		t.Fatalf("update secret = %q, want secret", got)
 	}
 }
 
