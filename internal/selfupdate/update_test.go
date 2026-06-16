@@ -14,14 +14,14 @@ import (
 	"testing"
 )
 
-func TestApplySkipsWhenDisabled(t *testing.T) {
+func TestApplyReportsWhenDisabled(t *testing.T) {
 	t.Setenv(RunnerEnv, "")
 	if Enabled() {
 		t.Skip("self update is enabled for this test binary")
 	}
 
-	if err := Apply(context.Background(), Manifest{}); err != nil {
-		t.Fatalf("Apply() error = %v, want nil", err)
+	if err := Apply(context.Background(), Manifest{}); !errors.Is(err, ErrDisabled) {
+		t.Fatalf("Apply() error = %v, want ErrDisabled", err)
 	}
 }
 

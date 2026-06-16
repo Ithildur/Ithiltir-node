@@ -17,7 +17,10 @@ import (
 	"time"
 )
 
-var ErrRestart = errors.New("restart for update")
+var (
+	ErrRestart  = errors.New("restart for update")
+	ErrDisabled = errors.New("self update is disabled")
+)
 
 const (
 	RunnerEnv = "ITHILTIR_NODE_RUNNER"
@@ -34,7 +37,7 @@ type Manifest struct {
 
 func Apply(ctx context.Context, m Manifest) error {
 	if !Enabled() {
-		return nil
+		return ErrDisabled
 	}
 	if err := validate(m); err != nil {
 		return err
