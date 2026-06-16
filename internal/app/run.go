@@ -197,6 +197,11 @@ func runPush(args []string, cfg collect.Config, debug bool, requireHTTPS bool) i
 		if errors.Is(err, selfupdate.ErrRestart) {
 			cancel()
 			shutdownDebugServer()
+			s.Stop()
+			if err := restartForUpdate(); err != nil {
+				log.Printf("node update restart failed: %v", err)
+				return 1
+			}
 			return 0
 		}
 		if err != nil && !errors.Is(err, context.Canceled) {
