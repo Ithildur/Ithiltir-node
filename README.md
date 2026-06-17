@@ -65,8 +65,9 @@ Writes are atomic and keep file mode `0600`.
 ### Self Update
 
 - Windows updates require the runner (`ITHILTIR_NODE_RUNNER=1`) and replace `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`
-- Linux and macOS updates work only from the installed release layout under `/var/lib/ithiltir-node/releases`; the node downloads the new binary, switches `/var/lib/ithiltir-node/current`, exits cleanly, and lets systemd/launchd restart it
-- Direct binaries outside the installed layout ignore update manifests
+- Linux and macOS updates work only from the installed release layout under `/var/lib/ithiltir-node/releases`; the node downloads the new binary, switches `/var/lib/ithiltir-node/current`, then execs the updated node with the same args and environment
+- Update asset downloads send the current target key as `X-Node-Secret`; keep keys out of URLs and query strings
+- Direct binaries outside the installed layout do not apply update manifests; the push loop reports self update as disabled and keeps running
 
 ### Version
 

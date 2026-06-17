@@ -83,9 +83,9 @@ target URL 规则：
 - `update` 存在时，`update.version`、`update.url`、`update.sha256` 和正数字节数 `update.size` 必填。`update.id` 是可选元数据。
 - `update.url` 必须是带 host 的绝对 `http` 或 `https` URL。`update.version` 必须是单个 release 目录名，不能是 `.` 或 `..`，且不得包含路径分隔符。`update.sha256` 是期望的 SHA-256 十六进制摘要，`update.size` 必须等于下载字节数。
 - 下载 `update.url` 时，node 会把当前 target key 作为 `X-Node-Secret` 发送。不要把 key 放进 URL 或 query string。
-- Windows 自更新需要 Windows runner（`ITHILTIR_NODE_RUNNER=1`）。Linux 和 macOS 自更新需要 `/var/lib/ithiltir-node/releases` 安装布局。安装布局外的直接二进制会忽略 update manifest。
+- Windows 自更新需要 Windows runner（`ITHILTIR_NODE_RUNNER=1`）。Linux 和 macOS 自更新需要 `/var/lib/ithiltir-node/releases` 安装布局。安装布局外的直接二进制不会应用 update manifest；push 循环会报告 self update disabled 并继续运行。
 - `version` 与 node 当前上报版本相同的 manifest 会先被忽略，不参与冲突判断。如果同一轮里多个剩余 target 返回 update manifest，所有 manifest 的 `id`、`version`、`url`、`sha256` 和 `size` 必须一致；有冲突则跳过更新。
-- 成功暂存更新后，`node push` 会干净退出。Windows runner 校验暂存文件，替换 `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`，然后重启 node。Linux 和 macOS 切换 `/var/lib/ithiltir-node/current` 到下载后的 release，并交给 systemd/launchd 重启 node。
+- Windows 成功暂存更新后，`node push` 会干净退出。Windows runner 校验暂存文件，替换 `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`，然后重启 node。Linux 和 macOS 切换 `/var/lib/ithiltir-node/current` 到下载后的 release，然后用相同参数和环境 exec 更新后的 node。
 - JSON 格式错误、manifest 非法、下载失败、大小不匹配或校验和不匹配时，跳过更新并继续上报。
 - 任何非 `200` 响应都会让该 target 在当前轮失败。
 - `/api/node/identity` 必须返回带 `install_id` 的 JSON；`created` 只是行为元数据。

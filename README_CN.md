@@ -65,8 +65,9 @@
 ### 自更新
 
 - Windows 更新需要 runner（`ITHILTIR_NODE_RUNNER=1`），并替换 `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`
-- Linux 和 macOS 只在 `/var/lib/ithiltir-node/releases` 安装布局内自更新；node 下载新二进制，切换 `/var/lib/ithiltir-node/current`，干净退出并交给 systemd/launchd 重启
-- 安装布局外的直接二进制会忽略 update manifest
+- Linux 和 macOS 只在 `/var/lib/ithiltir-node/releases` 安装布局内自更新；node 下载新二进制，切换 `/var/lib/ithiltir-node/current`，然后用相同参数和环境 exec 更新后的 node
+- 下载更新产物时会把当前 target key 作为 `X-Node-Secret` 发送；不要把 key 放进 URL 或 query string
+- 安装布局外的直接二进制不会应用 update manifest；push 循环会报告 self update disabled 并继续运行
 
 ### Version
 
