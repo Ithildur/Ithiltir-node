@@ -6,6 +6,9 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"time"
+
+	"Ithiltir-node/internal/conncache"
 )
 
 func countProcNetFile(path string) (int, error) {
@@ -115,5 +118,12 @@ func isProcPID(name string) bool {
 }
 
 func countTCPUDP() (tcp int, udp int) {
-	return countTCPUDPFromProc("/proc")
+	return countTCPUDPWithCache(conncache.DefaultPath(), "/proc", time.Now().UTC())
+}
+
+func countTCPUDPWithCache(cachePath, procRoot string, now time.Time) (tcp int, udp int) {
+	if tcp, udp, ok := conncache.Read(cachePath, now); ok {
+		return tcp, udp
+	}
+	return countTCPUDPFromProc(procRoot)
 }

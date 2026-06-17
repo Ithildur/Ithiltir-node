@@ -3,9 +3,13 @@
 package collect
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"Ithiltir-node/internal/conncache"
 )
 
 func TestCountTCPUDPFromProcCountsUniqueNetNS(t *testing.T) {
@@ -60,6 +64,56 @@ func TestCountTCPUDPFromProcFallsBackToProcNet(t *testing.T) {
 	}
 }
 
+func TestCountTCPUDPWithCacheUsesFreshCache(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	writeNetFiles(t, filepath.Join(root, "net"), 2, 1, 4, 1)
+	cachePath := writeConnCache(t, conncache.Cache{
+		Schema:     conncache.Schema,
+		UpdatedAt:  now,
+		TTLSeconds: 10,
+		Status:     "ok",
+		TCPCount:   11,
+		UDPCount:   12,
+	})
+
+	tcp, udp := countTCPUDPWithCache(cachePath, root, now)
+	if tcp != 11 || udp != 12 {
+		t.Fatalf("countTCPUDPWithCache() = tcp %d udp %d, want tcp 11 udp 12", tcp, udp)
+	}
+}
+
+func TestCountTCPUDPWithCacheFallsBackToProcWhenCacheMissing(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	writeNetFiles(t, filepath.Join(root, "net"), 2, 1, 4, 1)
+	cachePath := filepath.Join(t.TempDir(), "missing.json")
+
+	tcp, udp := countTCPUDPWithCache(cachePath, root, now)
+	if tcp != 3 || udp != 5 {
+		t.Fatalf("countTCPUDPWithCache() = tcp %d udp %d, want tcp 3 udp 5", tcp, udp)
+	}
+}
+
+func TestCountTCPUDPWithCacheFallsBackToProc(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	writeNetFiles(t, filepath.Join(root, "net"), 2, 1, 4, 1)
+	cachePath := writeConnCache(t, conncache.Cache{
+		Schema:     conncache.Schema,
+		UpdatedAt:  now.Add(-11 * time.Second),
+		TTLSeconds: 10,
+		Status:     "ok",
+		TCPCount:   11,
+		UDPCount:   12,
+	})
+
+	tcp, udp := countTCPUDPWithCache(cachePath, root, now)
+	if tcp != 3 || udp != 5 {
+		t.Fatalf("countTCPUDPWithCache() = tcp %d udp %d, want tcp 3 udp 5", tcp, udp)
+	}
+}
+
 func linkNetNS(t *testing.T, root, pid, ns string) {
 	t.Helper()
 
@@ -94,4 +148,18 @@ func writeProcNetFile(t *testing.T, path string, rows int) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func writeConnCache(t *testing.T, cache conncache.Cache) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "connections.json")
+	body, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatalf("marshal connections cache: %v", err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("write connections cache: %v", err)
+	}
+	return path
 }
