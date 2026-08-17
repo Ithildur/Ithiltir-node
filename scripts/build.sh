@@ -6,7 +6,7 @@ use_git_tag="false"
 release_mode="false"
 release_notes=""
 release_notes_tmp=""
-goreleaser_version="v2.15.2"
+goreleaser_version="v2.17.1"
 semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
 
 cleanup() {
