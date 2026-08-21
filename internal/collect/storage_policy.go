@@ -16,10 +16,6 @@ func skipDisk(deviceName string, mountpoints []string) bool {
 }
 
 func dropFS(fs metrics.DiskUsage) bool {
-	return dropPVEFS(fs)
-}
-
-func dropPVEFS(fs metrics.DiskUsage) bool {
 	if strings.ToLower(strings.TrimSpace(fs.FsType)) != "zfs" {
 		return false
 	}

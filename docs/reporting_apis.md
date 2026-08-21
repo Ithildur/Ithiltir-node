@@ -79,7 +79,7 @@ Response handling:
 }
 ```
 
-- Other top-level JSON fields are ignored; `ok` is not required.
+- Other top-level JSON fields are ignored.
 - `update.version`, `update.url`, `update.sha256`, and positive byte `update.size` are required when `update` is present. `update.id` is optional metadata.
 - `update.url` must be an absolute `http` or `https` URL with a host. `update.version` must be a single release directory name, not `.` or `..`, and must not contain path separators. `update.sha256` is the expected SHA-256 hex digest, and `update.size` must equal the downloaded byte count.
 - When downloading `update.url`, the node sends the current target key as `X-Node-Secret`. Do not put the key in the URL or query string.

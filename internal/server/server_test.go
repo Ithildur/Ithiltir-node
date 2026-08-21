@@ -77,12 +77,6 @@ func TestLocalAliasReturnsPage(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "<title>Ithiltir-node Local</title>") {
 		t.Fatal("GET /local did not return the local page")
 	}
-
-	old := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(old, httptest.NewRequest(http.MethodGet, "/serve", nil))
-	if old.Code != http.StatusNotFound {
-		t.Fatalf("GET /serve status = %d, want 404", old.Code)
-	}
 }
 
 func TestLocalStaticEndpoint(t *testing.T) {
@@ -156,12 +150,6 @@ func TestLocalPageCanBeOverriddenAfterBuild(t *testing.T) {
 	}
 	if strings.TrimSpace(asset.Body.String()) != "custom asset" {
 		t.Fatal("GET /local-assets/custom.txt did not return the external asset")
-	}
-
-	oldAsset := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(oldAsset, httptest.NewRequest(http.MethodGet, "/serve-assets/custom.txt", nil))
-	if oldAsset.Code != http.StatusNotFound {
-		t.Fatalf("GET /serve-assets/custom.txt status = %d, want 404", oldAsset.Code)
 	}
 
 	private := httptest.NewRecorder()

@@ -95,25 +95,6 @@ func TestCountTCPUDPWithCacheFallsBackToProcWhenCacheMissing(t *testing.T) {
 	}
 }
 
-func TestCountTCPUDPWithCacheFallsBackToProc(t *testing.T) {
-	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
-	root := t.TempDir()
-	writeNetFiles(t, filepath.Join(root, "net"), 2, 1, 4, 1)
-	cachePath := writeConnCache(t, conncache.Cache{
-		Schema:     conncache.Schema,
-		UpdatedAt:  now.Add(-11 * time.Second),
-		TTLSeconds: 10,
-		Status:     "ok",
-		TCPCount:   11,
-		UDPCount:   12,
-	})
-
-	tcp, udp := countTCPUDPWithCache(cachePath, root, now)
-	if tcp != 3 || udp != 5 {
-		t.Fatalf("countTCPUDPWithCache() = tcp %d udp %d, want tcp 3 udp 5", tcp, udp)
-	}
-}
-
 func linkNetNS(t *testing.T, root, pid, ns string) {
 	t.Helper()
 

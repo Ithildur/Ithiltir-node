@@ -626,7 +626,6 @@ func drainBody(resp *http.Response) {
 }
 
 type metricsResponse struct {
-	OK     bool                 `json:"ok"`
 	Update *selfupdate.Manifest `json:"update"`
 }
 
@@ -675,11 +674,6 @@ func sameUpdateManifest(a, b *selfupdate.Manifest) bool {
 func (s *delivery) handleResponse(resp *http.Response, target *target, debug bool) (bool, bool, *selfupdate.Manifest) {
 	defer drainBody(resp)
 
-	if resp.StatusCode == http.StatusUnprocessableEntity {
-		s.errLimiter.logf("push target %d non-200 status: %s", target.id, resp.Status)
-		return false, false, nil
-	}
-
 	if resp.StatusCode != http.StatusOK {
 		s.errLimiter.logf("push target %d non-200 status: %s", target.id, resp.Status)
 		return false, false, nil
@@ -725,14 +719,10 @@ func decodeMetricsResponse(resp *http.Response) *selfupdate.Manifest {
 }
 
 func StartWithCache(ctx context.Context, targets []reportcfg.Target, interval time.Duration, s nodeiface.PushSource, debug bool, requireHTTPS bool, cache *Cache) error {
-	return start(ctx, targets, interval, s, debug, requireHTTPS, cache)
-}
-
-func start(ctx context.Context, specs []reportcfg.Target, interval time.Duration, s nodeiface.PushSource, debug bool, requireHTTPS bool, cache *Cache) error {
 	if interval <= 0 {
 		return fmt.Errorf("push interval must be positive")
 	}
-	agent, err := newAgent(specs, interval, s, debug, requireHTTPS, cache)
+	agent, err := newAgent(targets, interval, s, debug, requireHTTPS, cache)
 	if err != nil {
 		return err
 	}

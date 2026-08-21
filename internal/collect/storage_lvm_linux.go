@@ -10,9 +10,8 @@ import (
 )
 
 type thinpoolCache struct {
-	UpdatedAt string              `json:"updated_at"`
-	Pools     []thinpoolCachePool `json:"pools"`
-	VGs       []thinpoolCacheVG   `json:"vgs,omitempty"`
+	Pools []thinpoolCachePool `json:"pools"`
+	VGs   []thinpoolCacheVG   `json:"vgs,omitempty"`
 }
 
 type thinpoolCachePool struct {

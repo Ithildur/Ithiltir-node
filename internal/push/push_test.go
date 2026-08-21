@@ -270,7 +270,7 @@ func TestStartPushAgentResendsStaticWhenSnapshotChanges(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- start(ctx, testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
+		errCh <- StartWithCache(ctx, testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
 	}()
 
 	select {
@@ -282,7 +282,7 @@ func TestStartPushAgentResendsStaticWhenSnapshotChanges(t *testing.T) {
 
 	err := <-errCh
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("start() error = %v, want context.Canceled", err)
+		t.Fatalf("StartWithCache() error = %v, want context.Canceled", err)
 	}
 	if got := staticPosts.Load(); got < 2 {
 		t.Fatalf("static posts = %d, want at least 2", got)
@@ -352,7 +352,7 @@ func TestStartPushAgentRetriesStaticWhileMetricsContinue(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- start(ctx, testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
+		errCh <- StartWithCache(ctx, testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
 	}()
 
 	select {
@@ -364,7 +364,7 @@ func TestStartPushAgentRetriesStaticWhileMetricsContinue(t *testing.T) {
 
 	err := <-errCh
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("start() error = %v, want context.Canceled", err)
+		t.Fatalf("StartWithCache() error = %v, want context.Canceled", err)
 	}
 	if got := staticCalls.Load(); got != 2 {
 		t.Fatalf("Static() called %d times, want exactly 2", got)
@@ -414,7 +414,6 @@ func TestStartPushAgentReturnsRestartWithStaticSync(t *testing.T) {
 		case "/api/node/metrics":
 			w.Header().Set("Content-Type", "application/json")
 			if err := json.NewEncoder(w).Encode(metricsResponse{
-				OK: true,
 				Update: &selfupdate.Manifest{
 					Version: "1.0.1",
 					URL:     "https://example.test/node",
@@ -443,16 +442,16 @@ func TestStartPushAgentReturnsRestartWithStaticSync(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- start(context.Background(), testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
+		errCh <- StartWithCache(context.Background(), testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
 	}()
 
 	select {
 	case err := <-errCh:
 		if !errors.Is(err, selfupdate.ErrRestart) {
-			t.Fatalf("start() error = %v, want ErrRestart", err)
+			t.Fatalf("StartWithCache() error = %v, want ErrRestart", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("start() did not return after update restart")
+		t.Fatal("StartWithCache() did not return after update restart")
 	}
 	if !applyCalled.Load() {
 		t.Fatal("applyUpdate was not called")
@@ -486,9 +485,9 @@ func TestStartPushAgentKeepsRunningAfterTarget422(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	err := start(ctx, testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
+	err := StartWithCache(ctx, testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("start() error = %v, want context.DeadlineExceeded", err)
+		t.Fatalf("StartWithCache() error = %v, want context.DeadlineExceeded", err)
 	}
 	if got := metricsPosts.Load(); got < 5 {
 		t.Fatalf("metrics posts = %d, want at least 5", got)
@@ -526,7 +525,7 @@ func TestStartPushAgentFallsBackToHTTPForPlaintextServer(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- start(ctx, testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
+		errCh <- StartWithCache(ctx, testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, false, nil)
 	}()
 
 	select {
@@ -538,7 +537,7 @@ func TestStartPushAgentFallsBackToHTTPForPlaintextServer(t *testing.T) {
 
 	err := <-errCh
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("start() error = %v, want context.Canceled", err)
+		t.Fatalf("StartWithCache() error = %v, want context.Canceled", err)
 	}
 	if got := metricsPosts.Load(); got < 1 {
 		t.Fatalf("metrics posts = %d, want at least 1", got)
@@ -569,9 +568,9 @@ func TestStartPushAgentRequireHTTPSDoesNotFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 
-	err := start(ctx, testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, true, nil)
+	err := StartWithCache(ctx, testTargets(host, port, "secret"), 10*time.Millisecond, snapshotter, false, true, nil)
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("start() error = %v, want context.DeadlineExceeded", err)
+		t.Fatalf("StartWithCache() error = %v, want context.DeadlineExceeded", err)
 	}
 	if got := metricsPosts.Load(); got != 0 {
 		t.Fatalf("metrics posts = %d, want 0 when requireHTTPS blocks fallback", got)
@@ -622,7 +621,7 @@ func TestStartPushAgentSendsRoundToAllTargets(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- start(ctx, targets, 10*time.Millisecond, snapshotter, false, false, nil)
+		errCh <- StartWithCache(ctx, targets, 10*time.Millisecond, snapshotter, false, false, nil)
 	}()
 
 	select {
@@ -634,6 +633,6 @@ func TestStartPushAgentSendsRoundToAllTargets(t *testing.T) {
 
 	err := <-errCh
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("start() error = %v, want context.Canceled", err)
+		t.Fatalf("StartWithCache() error = %v, want context.Canceled", err)
 	}
 }

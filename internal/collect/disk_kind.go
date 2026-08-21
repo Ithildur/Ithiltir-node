@@ -57,12 +57,6 @@ var diskKindTable = map[string]diskKindInfo{
 		baseKind:    "logical",
 		roleScore:   50,
 	},
-	"ceph_pool": {
-		logical:   "ceph_pool",
-		ref:       "ceph_pool",
-		baseKind:  "logical",
-		roleScore: 50,
-	},
 	"lvm_vg": {
 		logical:     "lvm_vg",
 		ref:         "lvm_vg",

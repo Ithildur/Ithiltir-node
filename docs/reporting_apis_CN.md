@@ -79,7 +79,7 @@ target URL 规则：
 }
 ```
 
-- 其他顶层 JSON 字段会被忽略；`ok` 不是必填字段。
+- 其他顶层 JSON 字段会被忽略。
 - `update` 存在时，`update.version`、`update.url`、`update.sha256` 和正数字节数 `update.size` 必填。`update.id` 是可选元数据。
 - `update.url` 必须是带 host 的绝对 `http` 或 `https` URL。`update.version` 必须是单个 release 目录名，不能是 `.` 或 `..`，且不得包含路径分隔符。`update.sha256` 是期望的 SHA-256 十六进制摘要，`update.size` 必须等于下载字节数。
 - 下载 `update.url` 时，node 会把当前 target key 作为 `X-Node-Secret` 发送。不要把 key 放进 URL 或 query string。

@@ -321,32 +321,7 @@
   }
 
   function offline() {
-    render({
-      hostname: "--",
-      cpuModel: "--",
-      coreCount: "--",
-      memoryTotal: "--",
-      swapTotal: "--",
-      platform: "--",
-      kernel: "--",
-      uptime: "--",
-      processes: "--",
-      tcp: "--",
-      udp: "--",
-      cpu: 0,
-      memory: 0,
-      disk: 0,
-      load: "--",
-      memoryText: "--",
-      buffers: "--",
-      cached: "--",
-      swapText: "--",
-      wait: "--",
-      disks: [],
-      io: [],
-      nets: [],
-      raid: []
-    });
+    render({});
   }
 
   async function refreshStatic() {
@@ -361,7 +336,7 @@
     try {
       await refreshStatic();
       const res = await fetch(cfg.endpoint, { headers: { Accept: "application/json" }, cache: "no-store" });
-      if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const payload = await res.json();
       render(toView(payload, staticSnap));
     } catch {
