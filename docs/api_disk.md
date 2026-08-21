@@ -85,11 +85,11 @@ S.M.A.R.T. data is read from the root-side cache file. It is runtime state, not 
   - `updated_at`, `ttl_seconds`
 - `devices[]`
   - required: `name`, `source`, `status`
-  - optional: `ref`, `device_path`, `device_type`, `protocol`, `model`, `serial`, `wwn`, `exit_status`, `health`, `temp_c`, `power_on_hours`, `lifetime_used_percent`, `critical_warning`, `failing_attrs[]`
+  - optional: `ref`, `device_path`, `device_type`, `protocol`, `model`, `serial`, `wwn`, `exit_status`, `health`, `temp_c`, `power_on_hours`, `lifetime_used_percent`, `critical_warning`, `media_errors`, `failing_attrs[]`
 
 `devices[]` is always `[]`, not `null`. Unavailable SMART values are omitted.
 
-`critical_warning` is the raw NVMe critical warning bitset when available. `failing_attrs[]` contains ATA SMART attributes currently reported as failed:
+`critical_warning` is the raw NVMe critical warning bitset when available. `media_errors` is the NVMe SMART `media_errors` counter when available; alert text may label it with the SMART UI item number `0E`. `failing_attrs[]` contains ATA SMART attributes currently reported as failed:
 
 - `id`
 - `name`

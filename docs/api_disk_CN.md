@@ -85,11 +85,11 @@ S.M.A.R.T. 数据来自 root 侧缓存文件。它是运行时状态，不是静
   - `updated_at`、`ttl_seconds`
 - `devices[]`
   - 必填：`name`、`source`、`status`
-  - 可选：`ref`、`device_path`、`device_type`、`protocol`、`model`、`serial`、`wwn`、`exit_status`、`health`、`temp_c`、`power_on_hours`、`lifetime_used_percent`、`critical_warning`、`failing_attrs[]`
+  - 可选：`ref`、`device_path`、`device_type`、`protocol`、`model`、`serial`、`wwn`、`exit_status`、`health`、`temp_c`、`power_on_hours`、`lifetime_used_percent`、`critical_warning`、`media_errors`、`failing_attrs[]`
 
 `devices[]` 永远返回 `[]`，不是 `null`。读不到的 SMART 值省略字段。
 
-`critical_warning` 是 NVMe 的原始 critical warning bitset。`failing_attrs[]` 只包含当前 `FAILING_NOW` 的 ATA SMART 属性：
+`critical_warning` 是 NVMe 的原始 critical warning bitset。`media_errors` 是可读到时上报的 NVMe SMART `media_errors` 计数；告警文案可用 SMART UI 条目号 `0E` 标识。`failing_attrs[]` 只包含当前 `FAILING_NOW` 的 ATA SMART 属性：
 
 - `id`
 - `name`

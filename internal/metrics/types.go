@@ -195,6 +195,7 @@ type DiskSMARTDevice struct {
 	PowerOnHours    *uint64         `json:"power_on_hours,omitempty"`
 	LifetimeUsedPct *float64        `json:"lifetime_used_percent,omitempty"`
 	CriticalWarning *uint64         `json:"critical_warning,omitempty"`
+	MediaErrors     *uint64         `json:"media_errors,omitempty"`
 	FailingAttrs    []DiskSMARTAttr `json:"failing_attrs,omitempty"`
 }
 
@@ -353,6 +354,7 @@ func cloneDiskSMART(in DiskSMART) DiskSMART {
 		out.Devices[i].PowerOnHours = clonePtr(in.Devices[i].PowerOnHours)
 		out.Devices[i].LifetimeUsedPct = clonePtr(in.Devices[i].LifetimeUsedPct)
 		out.Devices[i].CriticalWarning = clonePtr(in.Devices[i].CriticalWarning)
+		out.Devices[i].MediaErrors = clonePtr(in.Devices[i].MediaErrors)
 		out.Devices[i].FailingAttrs = slices.Clone(in.Devices[i].FailingAttrs)
 	}
 	return out

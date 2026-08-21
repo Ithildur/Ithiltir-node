@@ -32,6 +32,7 @@ func TestReadCacheStatus(t *testing.T) {
 	t.Run("stale", func(t *testing.T) {
 		path := filepath.Join(dir, "stale.json")
 		criticalWarning := uint64(0x0e)
+		mediaErrors := uint64(3)
 		writeCacheFile(t, path, Cache{
 			Schema:     Schema,
 			UpdatedAt:  now.Add(-10 * time.Minute),
@@ -42,6 +43,7 @@ func TestReadCacheStatus(t *testing.T) {
 				Source:          "smartctl",
 				Status:          metrics.StatusOK,
 				CriticalWarning: &criticalWarning,
+				MediaErrors:     &mediaErrors,
 				FailingAttrs: []metrics.DiskSMARTAttr{{
 					ID:         184,
 					Name:       "End-to-End_Error",
@@ -55,6 +57,9 @@ func TestReadCacheStatus(t *testing.T) {
 		}
 		if got.Devices[0].CriticalWarning == nil || *got.Devices[0].CriticalWarning != 0x0e {
 			t.Fatalf("Read(stale) critical_warning = %v, want 0x0e", got.Devices[0].CriticalWarning)
+		}
+		if got.Devices[0].MediaErrors == nil || *got.Devices[0].MediaErrors != 3 {
+			t.Fatalf("Read(stale) media_errors = %v, want 3", got.Devices[0].MediaErrors)
 		}
 		if attrs := got.Devices[0].FailingAttrs; len(attrs) != 1 || attrs[0].WhenFailed != "FAILING_NOW" {
 			t.Fatalf("Read(stale) failing_attrs = %+v", attrs)

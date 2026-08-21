@@ -13,6 +13,7 @@ func TestSnapshotReturnsDeepCopy(t *testing.T) {
 	thermalUpdatedAt := time.Date(2026, 5, 14, 10, 1, 0, 0, time.UTC)
 	health := "passed"
 	criticalWarning := uint64(0x0e)
+	mediaErrors := uint64(3)
 	thermalTempC := 51.0
 	cpuPressure := metrics.PressureStats{Avg10: 1.25, Avg60: 0.5, Avg300: 0.1, Total: 123}
 	memoryPressure := metrics.PressureStats{Avg10: 2.5, Avg60: 1.5, Avg300: 0.5, Total: 456}
@@ -30,6 +31,7 @@ func TestSnapshotReturnsDeepCopy(t *testing.T) {
 					Status:          metrics.StatusOK,
 					Health:          &health,
 					CriticalWarning: &criticalWarning,
+					MediaErrors:     &mediaErrors,
 					FailingAttrs: []metrics.DiskSMARTAttr{{
 						ID:         184,
 						Name:       "End-to-End_Error",
@@ -77,6 +79,7 @@ func TestSnapshotReturnsDeepCopy(t *testing.T) {
 	*got.Disk.SMART.UpdatedAt = got.Disk.SMART.UpdatedAt.Add(time.Hour)
 	*got.Disk.SMART.Devices[0].Health = "failed"
 	*got.Disk.SMART.Devices[0].CriticalWarning = 0
+	*got.Disk.SMART.Devices[0].MediaErrors = 0
 	got.Disk.SMART.Devices[0].FailingAttrs[0].WhenFailed = ""
 	got.Raid.Arrays[0].MemberStates[0].Name = "bad-member"
 	*got.Pressure.CPU.Some = metrics.PressureStats{}
@@ -106,6 +109,9 @@ func TestSnapshotReturnsDeepCopy(t *testing.T) {
 	}
 	if again.Disk.SMART.Devices[0].CriticalWarning == nil || *again.Disk.SMART.Devices[0].CriticalWarning != 0x0e {
 		t.Fatalf("Snapshot() leaked smart critical warning mutation, got %v", again.Disk.SMART.Devices[0].CriticalWarning)
+	}
+	if again.Disk.SMART.Devices[0].MediaErrors == nil || *again.Disk.SMART.Devices[0].MediaErrors != 3 {
+		t.Fatalf("Snapshot() leaked smart media errors mutation, got %v", again.Disk.SMART.Devices[0].MediaErrors)
 	}
 	if got := again.Disk.SMART.Devices[0].FailingAttrs; len(got) != 1 || got[0].WhenFailed != "FAILING_NOW" {
 		t.Fatalf("Snapshot() leaked smart failing_attrs mutation, got %+v", got)
