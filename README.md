@@ -124,7 +124,7 @@ build/
 ```
 
 - GitHub Release title is the version tag. Node assets are plain binaries named `Ithiltir-node-<os>-<arch>`; Windows runner assets are named `Ithiltir-runner-windows-<arch>`. Windows keeps `.exe`, and checksums are uploaded separately
-- The scripts install GoReleaser `v2.15.2` if it is missing
+- The scripts install GoReleaser `v2.17.1` if it is missing
 
 ## Docs
 

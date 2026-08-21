@@ -81,9 +81,9 @@ $goBin = (Join-Path ((& go env GOPATH).Trim()) "bin")
 $env:PATH = "$goBin$([System.IO.Path]::PathSeparator)$env:PATH"
 
 if (-not (Get-Command goreleaser -ErrorAction SilentlyContinue)) {
-  Write-Host "GoReleaser not found, installing v2.15.2..."
+  Write-Host "GoReleaser not found, installing v2.17.1..."
   cd .\tools
-  go install github.com/goreleaser/goreleaser/v2@v2.15.2
+  go install github.com/goreleaser/goreleaser/v2@v2.17.1
   cd ..
 }
 

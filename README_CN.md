@@ -124,7 +124,7 @@ build/
 ```
 
 - GitHub Release 标题是版本 tag。node 产物是裸二进制，命名为 `Ithiltir-node-<os>-<arch>`；Windows runner 产物命名为 `Ithiltir-runner-windows-<arch>`。Windows 保留 `.exe`，checksums 单独上传
-- 脚本会在缺失时自动安装 GoReleaser `v2.15.2`
+- 脚本会在缺失时自动安装 GoReleaser `v2.17.1`
 
 ## 文档
 
