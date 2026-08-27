@@ -31,7 +31,7 @@ func TestEditTargetsKeepsStableIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Remove(1) error = %v", err)
 	}
-	next, third, err := Add(next, "https://c.example.com/api/node/metrics", "third", "server_33333333333333333333333333333333")
+	_, third, err := Add(next, "https://c.example.com/api/node/metrics", "third", "server_33333333333333333333333333333333")
 	if err != nil {
 		t.Fatalf("Add(third) error = %v", err)
 	}
