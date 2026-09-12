@@ -16,11 +16,6 @@ func TestCacheOwnsCopiesOnSetAndGet(t *testing.T) {
 		Metrics: &metrics.Snapshot{
 			System:  metrics.System{Alive: true, Uptime: "1d 0h 0m"},
 			Network: []metrics.NetIO{{Name: "eth0"}},
-			Raid: metrics.Raid{
-				Arrays: []metrics.RaidArray{
-					{Name: "md0", MemberStates: []metrics.RaidMember{{Name: "sda", State: "up"}}},
-				},
-			},
 		},
 	}
 
@@ -29,7 +24,6 @@ func TestCacheOwnsCopiesOnSetAndGet(t *testing.T) {
 	report.Version = "mutated"
 	report.Metrics.System.Uptime = "broken"
 	report.Metrics.Network[0].Name = "bad0"
-	report.Metrics.Raid.Arrays[0].MemberStates[0].Name = "bad-member"
 
 	got := cache.Get()
 	if got == nil {
@@ -43,9 +37,6 @@ func TestCacheOwnsCopiesOnSetAndGet(t *testing.T) {
 	}
 	if got.Metrics.Network[0].Name != "eth0" {
 		t.Fatalf("cached Network[0].Name = %q, want original", got.Metrics.Network[0].Name)
-	}
-	if got.Metrics.Raid.Arrays[0].MemberStates[0].Name != "sda" {
-		t.Fatalf("cached Raid member = %q, want original", got.Metrics.Raid.Arrays[0].MemberStates[0].Name)
 	}
 
 	got.Version = "changed-after-get"

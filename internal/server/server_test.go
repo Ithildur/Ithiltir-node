@@ -41,16 +41,18 @@ func TestLocalPageKeepsMetricsJSON(t *testing.T) {
 		},
 	}}, false)
 
-	page := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/", nil))
-	if page.Code != http.StatusOK {
-		t.Fatalf("GET / status = %d, want 200", page.Code)
-	}
-	if ct := page.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
-		t.Fatalf("GET / Content-Type = %q, want text/html", ct)
-	}
-	if !strings.Contains(page.Body.String(), "<title>Ithiltir-node Local</title>") {
-		t.Fatal("GET / did not return the local page")
+	for _, path := range []string{"/", "/local"} {
+		page := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, path, nil))
+		if page.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want 200", path, page.Code)
+		}
+		if ct := page.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+			t.Fatalf("GET %s Content-Type = %q, want text/html", path, ct)
+		}
+		if !strings.Contains(page.Body.String(), "<title>Ithiltir-node Local</title>") {
+			t.Fatalf("GET %s did not return the local page", path)
+		}
 	}
 
 	report := httptest.NewRecorder()
@@ -63,19 +65,6 @@ func TestLocalPageKeepsMetricsJSON(t *testing.T) {
 	}
 	if !strings.Contains(report.Body.String(), `"hostname":"node-a"`) {
 		t.Fatal("GET /metrics did not return the NodeReport JSON")
-	}
-}
-
-func TestLocalAliasReturnsPage(t *testing.T) {
-	srv, _ := NewServer("127.0.0.1", "0", testSource{snapshot: &metrics.Snapshot{}}, false)
-
-	rec := httptest.NewRecorder()
-	srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/local", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /local status = %d, want 200", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "<title>Ithiltir-node Local</title>") {
-		t.Fatal("GET /local did not return the local page")
 	}
 }
 

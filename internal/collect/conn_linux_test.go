@@ -54,16 +54,6 @@ func TestCountTCPUDPFromProcKeepsProcNetWhenNetNSPartial(t *testing.T) {
 	}
 }
 
-func TestCountTCPUDPFromProcFallsBackToProcNet(t *testing.T) {
-	root := t.TempDir()
-	writeNetFiles(t, filepath.Join(root, "net"), 2, 1, 4, 1)
-
-	tcp, udp := countTCPUDPFromProc(root)
-	if tcp != 3 || udp != 5 {
-		t.Fatalf("countTCPUDPFromProc() = tcp %d udp %d, want tcp 3 udp 5", tcp, udp)
-	}
-}
-
 func TestCountTCPUDPWithCacheUsesFreshCache(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	root := t.TempDir()

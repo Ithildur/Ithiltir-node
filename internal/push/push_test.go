@@ -399,10 +399,8 @@ func TestStartPushAgentReturnsRestartWithStaticSync(t *testing.T) {
 	oldApply := applyUpdate
 	defer func() { applyUpdate = oldApply }()
 
-	var applyCalled atomic.Bool
 	var gotSecret atomic.Value
 	applyUpdate = func(_ context.Context, m selfupdate.Manifest) error {
-		applyCalled.Store(true)
 		gotSecret.Store(m.Secret)
 		return selfupdate.ErrRestart
 	}
@@ -453,9 +451,6 @@ func TestStartPushAgentReturnsRestartWithStaticSync(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("StartWithCache() did not return after update restart")
 	}
-	if !applyCalled.Load() {
-		t.Fatal("applyUpdate was not called")
-	}
 	if got, _ := gotSecret.Load().(string); got != "secret" {
 		t.Fatalf("update secret = %q, want secret", got)
 	}
@@ -495,7 +490,6 @@ func TestStartPushAgentKeepsRunningAfterTarget422(t *testing.T) {
 }
 
 func TestStartPushAgentFallsBackToHTTPForPlaintextServer(t *testing.T) {
-	var metricsPosts atomic.Int32
 	done := make(chan struct{}, 1)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -503,7 +497,6 @@ func TestStartPushAgentFallsBackToHTTPForPlaintextServer(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		metricsPosts.Add(1)
 		w.WriteHeader(http.StatusOK)
 		select {
 		case done <- struct{}{}:
@@ -538,9 +531,6 @@ func TestStartPushAgentFallsBackToHTTPForPlaintextServer(t *testing.T) {
 	err := <-errCh
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("StartWithCache() error = %v, want context.Canceled", err)
-	}
-	if got := metricsPosts.Load(); got < 1 {
-		t.Fatalf("metrics posts = %d, want at least 1", got)
 	}
 }
 

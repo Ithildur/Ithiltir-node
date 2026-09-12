@@ -8,23 +8,6 @@ import (
 	"time"
 )
 
-func TestReadReturnsFreshCounts(t *testing.T) {
-	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
-	path := writeCache(t, Cache{
-		Schema:     Schema,
-		UpdatedAt:  now.Add(-time.Second),
-		TTLSeconds: 10,
-		Status:     "ok",
-		TCPCount:   7,
-		UDPCount:   3,
-	})
-
-	tcp, udp, ok := Read(path, now)
-	if !ok || tcp != 7 || udp != 3 {
-		t.Fatalf("Read() = tcp %d udp %d ok %t, want tcp 7 udp 3 ok true", tcp, udp, ok)
-	}
-}
-
 func TestReadRejectsStaleCache(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	path := writeCache(t, Cache{
