@@ -51,20 +51,14 @@ func isConnRefused(err error) bool {
 }
 
 func isPlainHTTP(err error) bool {
-	if err == nil {
-		return false
-	}
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) && urlErr.Err != nil {
-		err = urlErr.Err
-	}
-
-	var recordErr *tls.RecordHeaderError
-	if errors.As(err, &recordErr) {
+	if _, ok := errors.AsType[*tls.RecordHeaderError](err); ok {
 		return true
 	}
 
 	msg := err.Error()
+	if urlErr, ok := errors.AsType[*url.Error](err); ok {
+		msg = urlErr.Err.Error()
+	}
 	if strings.Contains(msg, "http: server gave HTTP response to HTTPS client") {
 		return true
 	}
@@ -75,33 +69,18 @@ func isPlainHTTP(err error) bool {
 }
 
 func isCertError(err error) bool {
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) && urlErr.Err != nil {
-		err = urlErr.Err
-	}
-
-	var unknownAuth x509.UnknownAuthorityError
-	if errors.As(err, &unknownAuth) {
+	if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
 		return true
 	}
-	var hostnameErr x509.HostnameError
-	if errors.As(err, &hostnameErr) {
+	if _, ok := errors.AsType[x509.HostnameError](err); ok {
 		return true
 	}
-	var certInvalid x509.CertificateInvalidError
-	if errors.As(err, &certInvalid) {
-		return true
-	}
-	return false
+	_, ok := errors.AsType[x509.CertificateInvalidError](err)
+	return ok
 }
 
 func isExpiredCert(err error) bool {
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) && urlErr.Err != nil {
-		err = urlErr.Err
-	}
-	var certInvalid x509.CertificateInvalidError
-	if errors.As(err, &certInvalid) {
+	if certInvalid, ok := errors.AsType[x509.CertificateInvalidError](err); ok {
 		return certInvalid.Reason == x509.Expired
 	}
 	return false
@@ -315,7 +294,7 @@ func (t *target) fallbackHTTP(err error) bool {
 }
 
 func (t *target) wakeStatic(reason string) {
-	if t.static == nil || t.static.source == nil {
+	if t.static.source == nil {
 		return
 	}
 	select {
@@ -345,10 +324,6 @@ func newStaticSync(source nodeiface.StaticSource) *staticSync {
 }
 
 func (s *staticSync) prepare() (*metrics.Static, staticState, []string, error) {
-	if s.source == nil {
-		return nil, staticRetry, nil, nil
-	}
-
 	snap := s.source.Static()
 	if err := validateStatic(snap); err != nil {
 		return nil, staticRetry, nil, err
@@ -375,10 +350,6 @@ func (s *staticSync) send(ctx context.Context, target *target, endpoint string, 
 }
 
 func (s *staticSync) run(ctx context.Context, target *target, debug bool, recordStatic func(*metrics.Static)) {
-	if s.source == nil {
-		return
-	}
-
 	retry := s.sync(ctx, target, debug, "startup", recordStatic)
 	for {
 		var retryCh <-chan time.Time
@@ -432,30 +403,10 @@ func (s *staticSync) sync(ctx context.Context, target *target, debug bool, reaso
 }
 
 func staticChangeCheckInterval(reportInterval time.Duration) time.Duration {
-	if reportInterval <= 0 {
+	if reportInterval >= staticChangeCheckMaxInterval {
 		return staticChangeCheckMaxInterval
 	}
-
-	minInterval := staticChangeCheckMinInterval
-	maxInterval := staticChangeCheckMaxInterval
-	if minInterval <= 0 {
-		minInterval = time.Second
-	}
-	if maxInterval <= 0 {
-		maxInterval = time.Minute
-	}
-	if maxInterval < minInterval {
-		maxInterval = minInterval
-	}
-
-	interval := reportInterval * 20
-	if interval < minInterval {
-		return minInterval
-	}
-	if interval > maxInterval {
-		return maxInterval
-	}
-	return interval
+	return min(staticChangeCheckMaxInterval, max(staticChangeCheckMinInterval, reportInterval*20))
 }
 
 type delivery struct {
@@ -618,9 +569,6 @@ func (s *delivery) handleError(ctx context.Context, target *target, err error) e
 }
 
 func drainBody(resp *http.Response) {
-	if resp == nil || resp.Body == nil {
-		return
-	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
 }
@@ -661,9 +609,6 @@ func (p *updatePlan) add(currentVersion string, manifest *selfupdate.Manifest, s
 }
 
 func sameUpdateManifest(a, b *selfupdate.Manifest) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
 	return a.ID == b.ID &&
 		a.Version == b.Version &&
 		a.URL == b.URL &&
@@ -693,9 +638,6 @@ func (s *delivery) handleResponse(resp *http.Response, target *target, debug boo
 }
 
 func decodeMetricsResponse(resp *http.Response) *selfupdate.Manifest {
-	if resp == nil || resp.Body == nil {
-		return nil
-	}
 	contentType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || !strings.EqualFold(contentType, "application/json") {
 		return nil
@@ -780,12 +722,10 @@ func (a *agent) sendRound(ctx context.Context) error {
 	results := make(chan targetResult, len(a.targets))
 	var wg sync.WaitGroup
 	for _, target := range a.targets {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			ok, manifest, err := a.sendTarget(ctx, target, body)
 			results <- targetResult{ok: ok, manifest: manifest, err: err, secret: target.secret}
-		}()
+		})
 	}
 	wg.Wait()
 	close(results)
@@ -852,21 +792,17 @@ func (a *agent) startStatic(ctx context.Context, interval time.Duration) {
 			continue
 		}
 		hasStatic = true
-		a.staticWG.Add(1)
-		go func() {
-			defer a.staticWG.Done()
+		a.staticWG.Go(func() {
 			target.static.run(ctx, target, a.debug, a.recordStaticFingerprint)
-		}()
+		})
 	}
 	if !hasStatic {
 		return
 	}
 
-	a.staticWG.Add(1)
-	go func() {
-		defer a.staticWG.Done()
+	a.staticWG.Go(func() {
 		a.watchStaticChanges(ctx, staticChangeCheckInterval(interval))
-	}()
+	})
 }
 
 func (a *agent) waitStatic() {
@@ -875,7 +811,7 @@ func (a *agent) waitStatic() {
 
 func (a *agent) staticSource() nodeiface.StaticSource {
 	for _, target := range a.targets {
-		if target.static == nil || target.static.source == nil {
+		if target.static.source == nil {
 			continue
 		}
 		return target.static.source
@@ -931,10 +867,6 @@ func (a *agent) wakeStatic(reason string) {
 }
 
 func (a *agent) watchStaticChanges(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		interval = staticChangeCheckMaxInterval
-	}
-
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 

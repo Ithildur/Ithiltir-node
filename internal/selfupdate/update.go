@@ -178,14 +178,14 @@ func stageWindows(ctx context.Context, home string, m Manifest) error {
 		return fmt.Errorf("create update temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close update temp file: %w", err)
-	}
 	defer os.Remove(tmpPath)
+	defer tmp.Close()
 
-	if err := download(ctx, m, tmpPath, 0o644); err != nil {
+	if err := download(ctx, m, tmp, 0o644); err != nil {
 		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close update temp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, stagedExe); err != nil {
 		return fmt.Errorf("stage update file: %w", err)
@@ -216,14 +216,14 @@ func applyUnix(ctx context.Context, home string, m Manifest) error {
 		return fmt.Errorf("create update temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close update temp file: %w", err)
-	}
 	defer os.Remove(tmpPath)
+	defer tmp.Close()
 
-	if err := download(ctx, m, tmpPath, 0o755); err != nil {
+	if err := download(ctx, m, tmp, 0o755); err != nil {
 		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close update temp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, releaseNodePath(home, m.Version)); err != nil {
 		return fmt.Errorf("install release binary: %w", err)
@@ -351,7 +351,7 @@ func writeFileAtomic(dir, path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-func download(ctx context.Context, m Manifest, path string, mode os.FileMode) error {
+func download(ctx context.Context, m Manifest, f *os.File, mode os.FileMode) error {
 	client := &http.Client{Timeout: 10 * time.Minute}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(m.URL), nil)
 	if err != nil {
@@ -369,13 +369,7 @@ func download(ctx context.Context, m Manifest, path string, mode os.FileMode) er
 		return fmt.Errorf("download update non-200 status: %s", resp.Status)
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
-	if err != nil {
-		return fmt.Errorf("create update temp file: %w", err)
-	}
 	if err := f.Chmod(mode); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
 		return fmt.Errorf("chmod update temp file: %w", err)
 	}
 
@@ -383,33 +377,20 @@ func download(ctx context.Context, m Manifest, path string, mode os.FileMode) er
 	w := io.MultiWriter(f, h)
 	n, copyErr := io.Copy(w, io.LimitReader(resp.Body, m.Size+1))
 	if copyErr != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
 		return fmt.Errorf("write update temp file: %w", copyErr)
 	}
 	if n > m.Size {
-		_ = f.Close()
-		_ = os.Remove(path)
 		return fmt.Errorf("update size exceeds manifest: got more than %d", m.Size)
 	}
-	syncErr := f.Sync()
-	closeErr := f.Close()
-	if syncErr != nil {
-		_ = os.Remove(path)
-		return fmt.Errorf("sync update temp file: %w", syncErr)
-	}
-	if closeErr != nil {
-		_ = os.Remove(path)
-		return fmt.Errorf("close update temp file: %w", closeErr)
-	}
 	if n != m.Size {
-		_ = os.Remove(path)
 		return fmt.Errorf("update size mismatch: got %d want %d", n, m.Size)
 	}
 	got := hex.EncodeToString(h.Sum(nil))
 	if !strings.EqualFold(got, strings.TrimSpace(m.SHA256)) {
-		_ = os.Remove(path)
 		return fmt.Errorf("update sha256 mismatch: got %s", got)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync update temp file: %w", err)
 	}
 	return nil
 }

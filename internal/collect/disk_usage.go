@@ -1,8 +1,9 @@
 package collect
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -52,29 +53,8 @@ func newFSUsageReader() *fsUsageReader {
 	}
 }
 
-func (r *fsUsageReader) probeTimeout() time.Duration {
-	if r.timeout > 0 {
-		return r.timeout
-	}
-	return defaultUsageTimeout
-}
-
-func (r *fsUsageReader) workerCount(jobCount int) int {
-	workers := r.workers
-	if workers < 1 {
-		workers = 1
-	}
-	if workers > jobCount {
-		workers = jobCount
-	}
-	return workers
-}
-
 func (r *fsUsageReader) read(path string) (*disk.UsageStat, error) {
 	r.mu.Lock()
-	if r.entries == nil {
-		r.entries = map[string]*usageEntry{}
-	}
 	entry := r.entries[path]
 	if entry == nil {
 		entry = &usageEntry{}
@@ -107,11 +87,7 @@ func (r *fsUsageReader) read(path string) (*disk.UsageStat, error) {
 }
 
 func (r *fsUsageReader) runProbe(path string, entry *usageEntry, probe *usageProbe) {
-	probeFn := r.probe
-	if probeFn == nil {
-		probeFn = disk.Usage
-	}
-	usage, err := probeFn(path)
+	usage, err := r.probe(path)
 
 	r.mu.Lock()
 	probe.usage = usage
@@ -119,16 +95,14 @@ func (r *fsUsageReader) runProbe(path string, entry *usageEntry, probe *usagePro
 	if err == nil && usage != nil {
 		entry.cached = usage
 	}
-	if entry.probe == probe {
-		entry.probe = nil
-	}
+	entry.probe = nil
 	entry.stuck = false
 	close(probe.done)
 	r.mu.Unlock()
 }
 
 func (r *fsUsageReader) waitProbe(entry *usageEntry, probe *usageProbe, cached *disk.UsageStat) (*disk.UsageStat, error) {
-	timer := time.NewTimer(r.probeTimeout())
+	timer := time.NewTimer(r.timeout)
 	defer timer.Stop()
 
 	select {
@@ -179,16 +153,12 @@ func (r *fsUsageReader) collect(parts []disk.PartitionStat, skipPseudo bool) []m
 		return nil
 	}
 
-	workerCount := r.workerCount(len(jobs))
-
 	jobCh := make(chan usageJob)
 	resultCh := make(chan metrics.DiskUsage, len(jobs))
 	var wg sync.WaitGroup
 
-	for range workerCount {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range min(r.workers, len(jobs)) {
+		wg.Go(func() {
 			for job := range jobCh {
 				usage, err := r.read(job.mountpoint)
 				if err != nil || usage == nil {
@@ -196,7 +166,7 @@ func (r *fsUsageReader) collect(parts []disk.PartitionStat, skipPseudo bool) []m
 				}
 				resultCh <- buildUsage(job.partition, job.mountpoint, usage)
 			}
-		}()
+		})
 	}
 
 	go func() {
@@ -213,16 +183,8 @@ func (r *fsUsageReader) collect(parts []disk.PartitionStat, skipPseudo bool) []m
 		out = append(out, metric)
 	}
 
-	sort.Slice(out, func(i, j int) bool {
-		a := out[i].Mountpoint
-		if a == "" {
-			a = out[i].Path
-		}
-		b := out[j].Mountpoint
-		if b == "" {
-			b = out[j].Path
-		}
-		return a < b
+	slices.SortFunc(out, func(a, b metrics.DiskUsage) int {
+		return cmp.Compare(a.Mountpoint, b.Mountpoint)
 	})
 
 	return out

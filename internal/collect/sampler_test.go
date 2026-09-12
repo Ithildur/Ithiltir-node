@@ -1,11 +1,44 @@
 package collect
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"Ithiltir-node/internal/metrics"
 )
+
+func TestSamplerInitialReportsKeepArrayFields(t *testing.T) {
+	s := NewSampler(time.Second, 0, 0, Config{}, "1.2.3")
+	static := s.Static()
+	s.collectFast()
+	snapshot := s.Snapshot()
+	for name, value := range map[string]any{
+		"static.physical":    static.Disk.Physical,
+		"static.logical":     static.Disk.Logical,
+		"static.filesystems": static.Disk.Filesystems,
+		"static.base_io":     static.Disk.BaseIO,
+		"disk.physical":      snapshot.Disk.Physical,
+		"disk.logical":       snapshot.Disk.Logical,
+		"disk.filesystems":   snapshot.Disk.Filesystems,
+		"disk.base_io":       snapshot.Disk.BaseIO,
+		"smart.devices":      snapshot.Disk.SMART.Devices,
+		"network":            snapshot.Network,
+		"raid.arrays":        snapshot.Raid.Arrays,
+		"thermal.sensors":    snapshot.Thermal.Sensors,
+	} {
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", name, err)
+		}
+		if len(data) == 0 || data[0] != '[' {
+			t.Errorf("%s = %s, want JSON array", name, data)
+		}
+	}
+	if snapshot.Disk.SMART.Status != metrics.StatusNoCache {
+		t.Errorf("initial SMART status = %q, want no_cache", snapshot.Disk.SMART.Status)
+	}
+}
 
 func TestSnapshotReturnsDeepCopy(t *testing.T) {
 	s := &Sampler{}
@@ -17,7 +50,6 @@ func TestSnapshotReturnsDeepCopy(t *testing.T) {
 	thermalTempC := 51.0
 	cpuPressure := metrics.PressureStats{Avg10: 1.25, Avg60: 0.5, Avg300: 0.1, Total: 123}
 	memoryPressure := metrics.PressureStats{Avg10: 2.5, Avg60: 1.5, Avg300: 0.5, Total: 456}
-	s.mu.Lock()
 	s.latest = &metrics.Snapshot{
 		System:  metrics.System{Alive: true, Uptime: "1d 0h 0m"},
 		Network: []metrics.NetIO{{Name: "eth0"}},
@@ -65,11 +97,13 @@ func TestSnapshotReturnsDeepCopy(t *testing.T) {
 			}},
 		},
 	}
-	s.mu.Unlock()
-
 	got := s.Snapshot()
 	if got == nil {
 		t.Fatal("Snapshot() = nil")
+	}
+	before, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	got.System.Uptime = "broken"
@@ -88,50 +122,11 @@ func TestSnapshotReturnsDeepCopy(t *testing.T) {
 	*got.Thermal.UpdatedAt = got.Thermal.UpdatedAt.Add(time.Hour)
 	*got.Thermal.Sensors[0].TempC = 99
 
-	again := s.Snapshot()
-	if again.System.Uptime != "1d 0h 0m" {
-		t.Fatalf("Snapshot() leaked scalar mutation, got %q", again.System.Uptime)
+	after, err := json.Marshal(s.Snapshot())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if again.Network[0].Name != "eth0" {
-		t.Fatalf("Snapshot() leaked network mutation, got %q", again.Network[0].Name)
-	}
-	if again.Disk.Physical[0].Name != "nvme0n1" {
-		t.Fatalf("Snapshot() leaked disk mutation, got %q", again.Disk.Physical[0].Name)
-	}
-	if again.Disk.SMART.Devices[0].Name != "nvme0n1" {
-		t.Fatalf("Snapshot() leaked smart mutation, got %q", again.Disk.SMART.Devices[0].Name)
-	}
-	if !again.Disk.SMART.UpdatedAt.Equal(smartUpdatedAt) {
-		t.Fatalf("Snapshot() leaked smart updated_at mutation, got %v", again.Disk.SMART.UpdatedAt)
-	}
-	if again.Disk.SMART.Devices[0].Health == nil || *again.Disk.SMART.Devices[0].Health != "passed" {
-		t.Fatalf("Snapshot() leaked smart health mutation, got %v", again.Disk.SMART.Devices[0].Health)
-	}
-	if again.Disk.SMART.Devices[0].CriticalWarning == nil || *again.Disk.SMART.Devices[0].CriticalWarning != 0x0e {
-		t.Fatalf("Snapshot() leaked smart critical warning mutation, got %v", again.Disk.SMART.Devices[0].CriticalWarning)
-	}
-	if again.Disk.SMART.Devices[0].MediaErrors == nil || *again.Disk.SMART.Devices[0].MediaErrors != 3 {
-		t.Fatalf("Snapshot() leaked smart media errors mutation, got %v", again.Disk.SMART.Devices[0].MediaErrors)
-	}
-	if got := again.Disk.SMART.Devices[0].FailingAttrs; len(got) != 1 || got[0].WhenFailed != "FAILING_NOW" {
-		t.Fatalf("Snapshot() leaked smart failing_attrs mutation, got %+v", got)
-	}
-	if again.Raid.Arrays[0].MemberStates[0].Name != "sda" {
-		t.Fatalf("Snapshot() leaked raid member mutation, got %q", again.Raid.Arrays[0].MemberStates[0].Name)
-	}
-	if again.Pressure.CPU.Some == nil || again.Pressure.CPU.Some.Total != 123 {
-		t.Fatalf("Snapshot() leaked CPU pressure mutation, got %+v", again.Pressure.CPU.Some)
-	}
-	if again.Pressure.Memory.Full == nil || again.Pressure.Memory.Full.Total != 456 {
-		t.Fatalf("Snapshot() leaked memory pressure mutation, got %+v", again.Pressure.Memory.Full)
-	}
-	if again.Thermal.Sensors[0].Name != "coretemp" {
-		t.Fatalf("Snapshot() leaked thermal mutation, got %q", again.Thermal.Sensors[0].Name)
-	}
-	if !again.Thermal.UpdatedAt.Equal(thermalUpdatedAt) {
-		t.Fatalf("Snapshot() leaked thermal updated_at mutation, got %v", again.Thermal.UpdatedAt)
-	}
-	if again.Thermal.Sensors[0].TempC == nil || *again.Thermal.Sensors[0].TempC != 51 {
-		t.Fatalf("Snapshot() leaked thermal temp mutation, got %v", again.Thermal.Sensors[0].TempC)
+	if string(after) != string(before) {
+		t.Fatalf("Snapshot() leaked mutations:\nbefore: %s\nafter:  %s", before, after)
 	}
 }

@@ -25,9 +25,6 @@ type logicalSnapshot struct {
 }
 
 func buildPhysical(m map[string]metrics.DiskIO) []metrics.DiskPhysical {
-	if len(m) == 0 {
-		return nil
-	}
 	names := make([]string, 0, len(m))
 	for name := range m {
 		names = append(names, name)
@@ -47,9 +44,6 @@ func buildPhysical(m map[string]metrics.DiskIO) []metrics.DiskPhysical {
 }
 
 func buildLogicalMetrics(logical []logicalSnapshot) []metrics.DiskLogical {
-	if len(logical) == 0 {
-		return nil
-	}
 	out := make([]metrics.DiskLogical, 0, len(logical))
 	for _, l := range logical {
 		out = append(out, metrics.DiskLogical{

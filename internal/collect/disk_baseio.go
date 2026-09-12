@@ -96,10 +96,6 @@ func buildBaseIO(logical []logicalSnapshot, physical []metrics.DiskPhysical, fil
 		}
 	}
 
-	if len(candidates) == 0 {
-		return nil
-	}
-
 	sortBaseIO(candidates, logical, filesystems)
 	for i := range candidates {
 		candidates[i] = fillBaseIO(candidates[i], physMap, zfsRates)
@@ -128,11 +124,6 @@ func buildBaseIO(logical []logicalSnapshot, physical []metrics.DiskPhysical, fil
 }
 
 func fillBaseIO(b baseIOCandidate, physMap map[string]metrics.DiskIO, zfsRates map[string]zfsIORates) baseIOCandidate {
-	name := strings.TrimSpace(b.Name)
-	if name == "" {
-		return b
-	}
-
 	if b.Kind == "physical" || b.Kind == "raid" {
 		if st, ok := physMap[normalizeDeviceName(b.Name)]; ok {
 			b.ReadBytes = st.ReadBytes
@@ -151,14 +142,12 @@ func fillBaseIO(b baseIOCandidate, physMap map[string]metrics.DiskIO, zfsRates m
 	}
 
 	if b.Kind == "logical" {
-		if zfsRates != nil {
-			if r, ok := zfsRates[b.Name]; ok {
-				b.ReadRateBytesPerSec = r.readBps
-				b.WriteRateBytesPerSec = r.writeBps
-				b.ReadIOPS = r.readIOPS
-				b.WriteIOPS = r.writeIOPS
-				b.IOPS = r.readIOPS + r.writeIOPS
-			}
+		if r, ok := zfsRates[b.Name]; ok {
+			b.ReadRateBytesPerSec = r.readBps
+			b.WriteRateBytesPerSec = r.writeBps
+			b.ReadIOPS = r.readIOPS
+			b.WriteIOPS = r.writeIOPS
+			b.IOPS = r.readIOPS + r.writeIOPS
 		}
 	}
 	return b
@@ -250,9 +239,6 @@ func logicalNameForFS(fs metrics.DiskUsage, logical []logicalSnapshot) string {
 }
 
 func applyRoles(candidates []baseIOCandidate, scores map[string]int) {
-	if len(candidates) == 0 {
-		return
-	}
 	bestIdx := -1
 	bestScore := 0
 	for i, c := range candidates {

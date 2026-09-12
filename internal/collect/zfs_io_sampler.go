@@ -22,16 +22,10 @@ func newZFSIOSampler() *zfsIOSampler {
 }
 
 func (z *zfsIOSampler) start(ctx context.Context, interval time.Duration, enabled func() bool) {
-	if z == nil {
-		return
-	}
 	go z.run(ctx, interval, enabled)
 }
 
 func (z *zfsIOSampler) trigger() {
-	if z == nil {
-		return
-	}
 	if z.hasRates() {
 		return
 	}
@@ -42,9 +36,6 @@ func (z *zfsIOSampler) trigger() {
 }
 
 func (z *zfsIOSampler) snapshot() map[string]zfsIORates {
-	if z == nil {
-		return nil
-	}
 	z.mu.RLock()
 	defer z.mu.RUnlock()
 	return cloneZFSIORates(z.rates)
@@ -57,9 +48,6 @@ func (z *zfsIOSampler) hasRates() bool {
 }
 
 func (z *zfsIOSampler) run(ctx context.Context, interval time.Duration, enabled func() bool) {
-	if interval <= 0 {
-		interval = time.Second
-	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -71,7 +59,7 @@ func (z *zfsIOSampler) run(ctx context.Context, interval time.Duration, enabled 
 			return
 		}
 
-		if enabled != nil && !enabled() {
+		if !enabled() {
 			z.setRates(nil)
 			continue
 		}

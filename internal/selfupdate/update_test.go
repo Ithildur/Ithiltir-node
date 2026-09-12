@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -44,7 +45,10 @@ func TestValidateRejectsReleasePathMeta(t *testing.T) {
 func TestStageWindowsWritesStagedFiles(t *testing.T) {
 	body := []byte("node binary")
 	sum := sha256.Sum256(body)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(nodeSecretHeader); got != "node-secret" {
+			t.Errorf("%s = %q, want node-secret", nodeSecretHeader, got)
+		}
 		_, _ = w.Write(body)
 	}))
 	defer srv.Close()
@@ -56,8 +60,9 @@ func TestStageWindowsWritesStagedFiles(t *testing.T) {
 		URL:     srv.URL,
 		SHA256:  hex.EncodeToString(sum[:]),
 		Size:    int64(len(body)),
+		Secret:  "node-secret",
 	}
-	if err := stageWindows(context.Background(), home, m); err != nil {
+	if err := stageWindows(t.Context(), home, m); err != nil {
 		t.Fatalf("stageWindows() error = %v", err)
 	}
 
@@ -76,42 +81,12 @@ func TestStageWindowsWritesStagedFiles(t *testing.T) {
 	if err := json.Unmarshal(gotManifest, &got); err != nil {
 		t.Fatalf("decode staged manifest: %v", err)
 	}
+	m.Secret = ""
 	if got != m {
 		t.Fatalf("staged manifest = %+v, want %+v", got, m)
 	}
-}
-
-func TestDownloadSendsNodeSecret(t *testing.T) {
-	body := []byte("node binary")
-	sum := sha256.Sum256(body)
-	gotSecret := make(chan string, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case gotSecret <- r.Header.Get(nodeSecretHeader):
-		default:
-		}
-		_, _ = w.Write(body)
-	}))
-	defer srv.Close()
-
-	path := filepath.Join(t.TempDir(), "node")
-	err := download(context.Background(), Manifest{
-		URL:    srv.URL,
-		SHA256: hex.EncodeToString(sum[:]),
-		Size:   int64(len(body)),
-		Secret: "node-secret",
-	}, path, 0o755)
-	if err != nil {
-		t.Fatalf("download() error = %v", err)
-	}
-
-	select {
-	case got := <-gotSecret:
-		if got != "node-secret" {
-			t.Fatalf("%s = %q, want node-secret", nodeSecretHeader, got)
-		}
-	default:
-		t.Fatalf("server did not receive %s", nodeSecretHeader)
+	if strings.Contains(string(gotManifest), "node-secret") {
+		t.Fatal("staged manifest contains download secret")
 	}
 }
 
@@ -149,6 +124,10 @@ func TestStageWindowsClearsOldStagingBeforeDownload(t *testing.T) {
 	if _, err := os.Stat(stagedManifestPath(home)); !os.IsNotExist(err) {
 		t.Fatalf("staged manifest still exists after failed stage: %v", err)
 	}
+	entries, err := os.ReadDir(stagingDir(home))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("staging directory after failed download = %v, %v, want empty", entries, err)
+	}
 }
 
 func TestApplyUnixSwitchesCurrentRelease(t *testing.T) {
@@ -182,7 +161,33 @@ func TestApplyUnixSwitchesCurrentRelease(t *testing.T) {
 		SHA256:  hex.EncodeToString(sum[:]),
 		Size:    int64(len(body)),
 	}
-	err := applyUnix(context.Background(), home, m)
+	for _, failure := range []struct {
+		name      string
+		size      int64
+		hash      string
+		wantError string
+	}{
+		{"oversized", m.Size - 1, m.SHA256, "update size exceeds manifest"},
+		{"truncated", m.Size + 1, m.SHA256, "update size mismatch"},
+		{"checksum", m.Size, strings.Repeat("0", 64), "update sha256 mismatch"},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			invalid := m
+			invalid.Size, invalid.SHA256 = failure.size, failure.hash
+			if err := applyUnix(t.Context(), home, invalid); err == nil || !strings.Contains(err.Error(), failure.wantError) {
+				t.Fatalf("applyUnix() error = %v, want %s", err, failure.wantError)
+			}
+			current, err := os.Readlink(currentDir(home))
+			if err != nil || current != oldDir {
+				t.Fatalf("current after failed update = %q, %v, want %q", current, err, oldDir)
+			}
+			entries, err := os.ReadDir(releaseDir(home, m.Version))
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("release directory after failed update = %v, %v, want empty", entries, err)
+			}
+		})
+	}
+	err := applyUnix(t.Context(), home, m)
 	if !errors.Is(err, ErrRestart) {
 		t.Fatalf("applyUnix() error = %v, want ErrRestart", err)
 	}

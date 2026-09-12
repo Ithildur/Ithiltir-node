@@ -168,9 +168,6 @@ func reportSecs(d time.Duration) int {
 	if d%time.Second != 0 {
 		secs++
 	}
-	if secs <= 0 {
-		return 1
-	}
 	return secs
 }
 
@@ -325,9 +322,7 @@ func (s *Sampler) Stop() {
 	s.runState = samplerStateStopped
 	s.runMu.Unlock()
 
-	if cancel != nil {
-		cancel()
-	}
+	cancel()
 }
 
 func thermalInterval(fast, medium time.Duration) time.Duration {
@@ -462,11 +457,8 @@ func buildStaticDisk(fs []metrics.DiskUsage, storages []metrics.StorageUsage, ra
 	}
 
 	staticBaseIO := buildStaticBaseIO(logical, filesystems)
-	if staticBaseIO == nil {
-		staticBaseIO = []metrics.StaticDiskBaseIO{}
-	}
 
-	staticPhysical := []metrics.StaticDiskPhysical(nil)
+	staticPhysical := make([]metrics.StaticDiskPhysical, 0)
 	if latest != nil {
 		staticPhysical = make([]metrics.StaticDiskPhysical, 0, len(latest.Disk.Physical))
 		for _, p := range latest.Disk.Physical {
@@ -476,9 +468,6 @@ func buildStaticDisk(fs []metrics.DiskUsage, storages []metrics.StorageUsage, ra
 				Ref:        p.Ref,
 			})
 		}
-	}
-	if staticPhysical == nil {
-		staticPhysical = []metrics.StaticDiskPhysical{}
 	}
 
 	return metrics.StaticDisk{
@@ -509,10 +498,6 @@ func pickFsType(mountpoint string, mountpoints map[string]metrics.DiskMountpoint
 func buildStaticBaseIO(logical []logicalSnapshot, filesystems []metrics.DiskUsage) []metrics.StaticDiskBaseIO {
 	candidates := buildBaseIOCandidates(logical)
 
-	if len(candidates) == 0 {
-		return nil
-	}
-
 	sortBaseIO(candidates, logical, filesystems)
 
 	out := make([]metrics.StaticDiskBaseIO, 0, len(candidates))
@@ -529,9 +514,6 @@ func buildStaticBaseIO(logical []logicalSnapshot, filesystems []metrics.DiskUsag
 }
 
 func buildFilesystems(filesystems []metrics.DiskUsage) []metrics.DiskFilesystem {
-	if len(filesystems) == 0 {
-		return []metrics.DiskFilesystem{}
-	}
 	out := make([]metrics.DiskFilesystem, 0, len(filesystems))
 	for _, u := range filesystems {
 		out = append(out, metrics.DiskFilesystem{
@@ -705,36 +687,6 @@ func (s *Sampler) collectFast() {
 		break
 	}
 	baseIO := buildBaseIO(logicals, physical, filesystems, zfsRates)
-	if physical == nil {
-		physical = []metrics.DiskPhysical{}
-	}
-	if filesystems == nil {
-		filesystems = []metrics.DiskUsage{}
-	}
-	if logical == nil {
-		logical = []metrics.DiskLogical{}
-	}
-	if baseIO == nil {
-		baseIO = []metrics.DiskBaseIO{}
-	}
-	if netIO == nil {
-		netIO = []metrics.NetIO{}
-	}
-	if slowSmart.Status == "" {
-		slowSmart = smartcache.Default()
-	}
-	if slowSmart.Devices == nil {
-		slowSmart.Devices = []metrics.DiskSMARTDevice{}
-	}
-	if thermal.Status == "" {
-		thermal = defaultThermal()
-	}
-	if thermal.Sensors == nil {
-		thermal.Sensors = []metrics.ThermalSensor{}
-	}
-	if slowRaid.Arrays == nil {
-		slowRaid.Arrays = []raidArraySnapshot{}
-	}
 	fsMetrics := buildFilesystems(filesystems)
 
 	m := &metrics.Snapshot{
