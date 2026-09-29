@@ -76,7 +76,19 @@ Writes are atomic and keep file mode `0600`.
 ./node -v
 ```
 
+## PVE VM monitoring
+
+The ordinary node optionally reads a root-owned cache; there is no separate virtualization node variant. Appending `--pve` to a Linux install command installs the precompiled `pve-cache` helper and systemd service through Dash. Node stays unprivileged. The Dash package must include matching helpers; no local compiler, PVE user or API token is needed.
+
+For manual deployment, install the helper outside the node-writable release tree, prepare root-owned `/run/ithiltir-node` readable by the runtime group, and run `pve-cache --serve --group ithiltir` as a root service. It owns basic metrics, slow IP collection and the local query socket. One-shot and `--guest` modes remain available for manual collection. Set `ITHILTIR_NODE_VIRT_CACHE=/run/ithiltir-node/virt.json` for `node push` to enable independent VM reporting. Unset means no cache reads or VM delivery tasks. `pve-cache --version` reports the node release version. Node self-update never replaces the root-owned helper.
+
+The helper reads local QEMU VM status and supplements CPU ratios with PVE resource statistics. Disk/network bytes are cumulative counters; unavailable metrics remain absent. Failed collection preserves the last successful observations/time. LXC, VM history, HA configuration and VM controls are not included. See [reporting API](docs/reporting_apis.md#virtual-machine-snapshots).
+
+Guest Agent IPs are returned in optional `ips` arrays, up to 128 unique IPv4/IPv6 addresses per VM, including private addresses and excluding loopback, link-local, unspecified, multicast and invalid addresses. PVE must enable the guest agent and the agent must be running inside the VM. Missing IPs do not fail basic collection. IP collection runs independently inside `pve-cache --serve` (manual one-shot: `--guest`): the scheduler wakes 60 seconds after completion, successful VMs wait five minutes, and failures back off for 5, 10, 20, then 30 minutes (maximum). Only running, non-template, non-paused VMs from a fresh inventory are queried. Four workers use five-second query deadlines within a 50-second slow-collection budget. Per-VM file locks are inherited by query processes; timeout kills the process group and waits for exit. A still-running query blocks any replacement for that VM. Cooldowns are saved before launch in root-only `/run/ithiltir-node/pve-guest`; this state is volatile and resets on reboot. Hot collection only reads this cache.
+
 ## Build
+
+Linux builds also produce `linux/pve_cache_linux_amd64` and `linux/pve_cache_linux_arm64`. Release assets are named `Ithiltir-pve-cache-linux-amd64` and `Ithiltir-pve-cache-linux-arm64`; they share the node version and checksum file.
 
 Build config lives in [`.goreleaser.yaml`](.goreleaser.yaml).
 
@@ -153,3 +165,8 @@ build/           generated artifacts
 ## License
 
 Ithiltir-node is licensed under the GNU Affero General Public License v3.0 only. See [LICENSE](LICENSE).
+
+
+## Node gRPC transport
+
+HTTP remains the default for compatibility. Set `ITHILTIR_NODE_TRANSPORT=grpc` (RPC only) or `auto` (negotiate before reports) in the Node service environment, then restart Node. Dash serves gRPC on its existing HTTP/2 listener; proxies must forward `/ithiltir.node.v1.Node/` with gRPC support. These modes never authorize plaintext fallback after authentication or TLS failures. PVE history also requires the root helper service (`pve-cache --serve`). Browser APIs and asset downloads remain HTTP.

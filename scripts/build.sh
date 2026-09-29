@@ -34,6 +34,9 @@ is_prerelease_version() {
 package_local_build() {
   mkdir -p build/linux build/macos build/windows
 
+  mv build/pve-cache_linux_amd64_v1/pve-cache build/linux/pve_cache_linux_amd64
+  mv build/pve-cache_linux_arm64_v8.0/pve-cache build/linux/pve_cache_linux_arm64
+
   mv build/node_linux_amd64_v1/node build/linux/node_linux_amd64
   mv build/node_linux_arm64_v8.0/node build/linux/node_linux_arm64
   mv build/node_darwin_arm64_v8.0/node build/macos/node_macos_arm64
@@ -43,6 +46,8 @@ package_local_build() {
   mv build/runner_windows_arm64_v8.0/ithiltir-runner.exe build/windows/runner_windows_arm64.exe
 
   rm -rf \
+    build/pve-cache_linux_amd64_v1 \
+    build/pve-cache_linux_arm64_v8.0 \
     build/node_linux_amd64_v1 \
     build/node_linux_arm64_v8.0 \
     build/node_darwin_arm64_v8.0 \

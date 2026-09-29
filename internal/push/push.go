@@ -21,6 +21,7 @@ import (
 
 	"Ithiltir-node/internal/metrics"
 	"Ithiltir-node/internal/nodeiface"
+	"Ithiltir-node/internal/nodewire"
 	"Ithiltir-node/internal/reportcfg"
 	"Ithiltir-node/internal/selfupdate"
 )
@@ -176,9 +177,14 @@ type target struct {
 	static       *staticSync
 	staticWake   chan string
 	delivery     *delivery
+	rpc          rpcTarget
 }
 
 func newTarget(spec reportcfg.Target, staticSource nodeiface.StaticSource, requireHTTPS bool) (*target, error) {
+	mode, err := transportMode()
+	if err != nil {
+		return nil, err
+	}
 	endpoint, err := url.Parse(strings.TrimSpace(spec.URL))
 	if err != nil {
 		return nil, fmt.Errorf("parse target %d url: %w", spec.ID, err)
@@ -191,6 +197,7 @@ func newTarget(spec reportcfg.Target, staticSource nodeiface.StaticSource, requi
 		return nil, fmt.Errorf("target %d host is required", spec.ID)
 	}
 	return &target{
+		rpc:          rpcTarget{mode: mode},
 		client:       &http.Client{Timeout: 10 * time.Second},
 		id:           spec.ID,
 		endpoint:     endpoint,
@@ -277,6 +284,11 @@ func (t *target) httpFallback(err error) fallbackDecision {
 }
 
 func (t *target) fallbackHTTP(err error) bool {
+	// Automatic negotiation never permits a TLS-to-plaintext downgrade.
+	// Explicit HTTP mode retains the existing legacy HTTP fallback policy.
+	if t.rpc.mode != "http" {
+		return false
+	}
 	decision := t.httpFallback(err)
 	if decision.expiredRefused {
 		_, _, _, hostPort := t.endpointParts()
@@ -336,7 +348,16 @@ func (s *staticSync) prepare() (*metrics.Static, staticState, []string, error) {
 }
 
 func (s *staticSync) send(ctx context.Context, target *target, endpoint string, debug bool, reason string, snap *metrics.Static, state staticState, missing []string) error {
-	if err := sendStatic(ctx, target.client, endpoint, target.secret, snap); err != nil {
+	client, err := target.rpcClient(ctx)
+	if err != nil {
+		return err
+	}
+	if client != nil {
+		err = target.rpcStatic(ctx, client, snap)
+	} else {
+		err = sendStatic(ctx, target.client, endpoint, target.secret, snap)
+	}
+	if err != nil {
 		return err
 	}
 	if debug {
@@ -414,6 +435,7 @@ type delivery struct {
 
 	connRefusedCount      int
 	connRefusedSuppressed bool
+	rpcFailed             bool
 }
 
 func newDelivery() *delivery {
@@ -501,6 +523,29 @@ func FetchIdentity(ctx context.Context, spec reportcfg.Target, requireHTTPS bool
 	target, err := newTarget(spec, nil, requireHTTPS)
 	if err != nil {
 		return Identity{}, err
+	}
+	defer target.closeRPC()
+	client, err := target.rpcClient(ctx)
+	if err != nil {
+		return Identity{}, err
+	}
+	if client != nil {
+		target.rpc.mu.Lock()
+		identity := target.rpc.identity
+		target.rpc.mu.Unlock()
+		if identity == nil {
+			callCtx, cancel := rpcTimeout(ctx, target.secret)
+			identity, err = client.Identify(callCtx, &nodewire.Empty{})
+			cancel()
+			if err != nil {
+				return Identity{}, err
+			}
+		}
+		installID, err := reportcfg.NormalizeServerInstallID(identity.InstallId)
+		if err != nil || identity.ProtocolVersion != 1 {
+			return Identity{}, fmt.Errorf("invalid RPC identity")
+		}
+		return Identity{TargetID: target.id, URL: target.metricsURL(), InstallID: installID, Created: identity.Created}, nil
 	}
 	resp, err := sendIdentity(ctx, target)
 	if err != nil {
@@ -669,9 +714,16 @@ func StartWithCache(ctx context.Context, targets []reportcfg.Target, interval ti
 		return err
 	}
 	runCtx, stop := context.WithCancel(ctx)
+	virtWG := startVirt(runCtx, agent.targets)
+	sessionWG := agent.startSessions(runCtx)
 	defer func() {
 		stop()
+		virtWG.Wait()
+		sessionWG.Wait()
 		agent.waitStatic()
+		for _, target := range agent.targets {
+			target.closeRPC()
+		}
 	}()
 
 	if d := s.PushDelay(); d > 0 {
@@ -771,6 +823,33 @@ func (a *agent) sendRound(ctx context.Context) error {
 }
 
 func (a *agent) sendTarget(ctx context.Context, target *target, body []byte) (bool, *selfupdate.Manifest, error) {
+	client, err := target.rpcClient(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, nil, ctx.Err()
+		}
+		target.delivery.errLimiter.logf("push target %d transport: %v", target.id, err)
+		return false, nil, nil
+	}
+	if client != nil {
+		manifest, err := target.rpcMetrics(ctx, client, body)
+		if err != nil {
+			target.delivery.rpcFailed = true
+			if ctx.Err() != nil {
+				return false, nil, ctx.Err()
+			}
+			target.delivery.errLimiter.logf("push target %d RPC: %v", target.id, err)
+			return false, nil, nil
+		}
+		if target.delivery.rpcFailed {
+			target.delivery.rpcFailed = false
+			target.wakeStatic("recovery")
+		}
+		if a.debug {
+			log.Printf("push target %d RPC ok", target.id)
+		}
+		return true, manifest, nil
+	}
 	resp, err := sendReport(ctx, target, body)
 	if err != nil {
 		if err := target.delivery.handleError(ctx, target, err); err != nil {
