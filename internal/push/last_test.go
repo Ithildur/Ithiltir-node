@@ -8,7 +8,7 @@ import (
 )
 
 func TestCacheOwnsCopiesOnSetAndGet(t *testing.T) {
-	cache := NewCache()
+	cache := new(Cache)
 	report := &metrics.NodeReport{
 		Version:   "1.0.0",
 		Hostname:  "node-1",

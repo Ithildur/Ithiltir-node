@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -50,20 +50,15 @@ func normalizeDeviceName(name string) string {
 		if resolved, err := filepath.EvalSymlinks(name); err == nil {
 			name = resolved
 		}
-		name = filepath.Base(name)
-	} else {
-		name = filepath.Base(name)
 	}
-	return name
+	return filepath.Base(name)
 }
 
 func firstMount(mps []string) string {
 	if len(mps) == 0 {
 		return ""
 	}
-	sorted := append([]string(nil), mps...)
-	sort.Strings(sorted)
-	return sorted[0]
+	return slices.Min(mps)
 }
 
 func uniqueStrings(in []string) []string {
@@ -138,14 +133,7 @@ func mapperAlias(aliases mapperAliases, kname, rawName string) string {
 	if kname == "" {
 		return ""
 	}
-	target := "/dev/" + kname
-	if aliases != nil {
-		if alias, ok := aliases[target]; ok {
-			return alias
-		}
-		return ""
-	}
-	return ""
+	return aliases["/dev/"+kname]
 }
 
 func buildRef(kind, name string) string {

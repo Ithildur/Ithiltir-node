@@ -152,7 +152,7 @@ func TestGuestConcurrentCollectorsAndCancellation(t *testing.T) {
 	if err := writeGuest(filepath.Join(dir, "101.json"), state); err != nil {
 		t.Fatal(err)
 	}
-	if err := queryGuest(t.Context(), dir, "pve", snapshot.VMs[0], func(context.Context, string, int, *os.File) ([]string, error) {
+	if err := queryGuest(t.Context(), dir, "pve", snapshot.VMs[0].ID, func(context.Context, string, int, *os.File) ([]string, error) {
 		t.Fatal("overlapping VM query")
 		return nil, nil
 	}); err != nil {

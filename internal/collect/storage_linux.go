@@ -10,26 +10,14 @@ func collectSlowPlatform(thinpoolCachePath string, debug bool, usage *fsUsageRea
 
 	raid = collectRaid(debug)
 
-	var (
-		tree          *lsblkOutput
-		zfs           []metrics.StorageUsage
-		lvm           []metrics.StorageUsage
-		blockStorages []metrics.StorageUsage
-	)
-
-	zfs = append(zfs, collectZFSPools(debug)...)
-	lvm = append(lvm, readLVMCache(thinpoolCachePath)...)
-	if t, err := readLsblkTree(); err == nil {
-		tree = t
-		blockStorages = append(blockStorages, collectBlockStorages(tree, byMount, raid, usage)...)
+	storages = make([]metrics.StorageUsage, 0)
+	storages = append(storages, collectZFSPools(debug)...)
+	storages = append(storages, readLVMCache(thinpoolCachePath)...)
+	if tree, err := readLsblkTree(); err == nil {
+		storages = append(storages, collectBlockStorages(tree, byMount, raid, usage)...)
 	} else {
-		blockStorages = append(blockStorages, fallbackStorages(filesystems)...)
+		storages = append(storages, fallbackStorages(filesystems)...)
 	}
-
-	storages = make([]metrics.StorageUsage, 0, len(zfs)+len(lvm)+len(blockStorages))
-	storages = append(storages, zfs...)
-	storages = append(storages, lvm...)
-	storages = append(storages, blockStorages...)
 
 	return filesystems, storages, raid
 }

@@ -88,7 +88,7 @@ func TestQuerySessionBoundsAndCancelsQueuedWork(t *testing.T) {
 	}}
 	var posts atomic.Int32
 	server := rpcHTTPServer(t, service, &posts)
-	destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, nil, false)
+	destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestQuerySessionForwardsAndCancelsLocalRequest(t *testing.T) {
 	}}
 	var posts atomic.Int32
 	server := rpcHTTPServer(t, service, &posts)
-	destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, nil, false)
+	destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestQuerySessionSurvivesFailedCapabilityProbe(t *testing.T) {
 	}}
 	var posts atomic.Int32
 	server := rpcHTTPServer(t, service, &posts)
-	destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, nil, false)
+	destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

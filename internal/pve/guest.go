@@ -13,7 +13,7 @@ import (
 )
 
 func guestIPs(ctx context.Context, host string, id int, lock *os.File) ([]string, error) {
-	raw, err := queryLocked(ctx, lock, fmt.Sprintf("/nodes/%s/qemu/%d/agent/network-get-interfaces", host, id))
+	raw, err := query(ctx, lock, fmt.Sprintf("/nodes/%s/qemu/%d/agent/network-get-interfaces", host, id))
 	if err != nil {
 		return nil, err
 	}

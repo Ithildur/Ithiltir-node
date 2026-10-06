@@ -56,7 +56,7 @@ func Collect(ctx context.Context, host string) ([]virt.VM, error) {
 	if host == "" || strings.ContainsAny(host, "/\\ \t\r\n") {
 		return nil, errors.New("invalid PVE node name")
 	}
-	raw, err := query(ctx, "/nodes/"+host+"/qemu", "--full", "1")
+	raw, err := query(ctx, nil, "/nodes/"+host+"/qemu", "--full", "1")
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func Collect(ctx context.Context, host string) ([]virt.VM, error) {
 	}
 	// A one-shot pvesh process has no prior CPU counters. Use the PVE
 	// statistics daemon's resource observations instead of reporting fake zeros.
-	raw, err = query(ctx, "/cluster/resources", "--type", "vm")
+	raw, err = query(ctx, nil, "/cluster/resources", "--type", "vm")
 	if err != nil {
 		return nil, err
 	}
@@ -79,11 +79,7 @@ func Collect(ctx context.Context, host string) ([]virt.VM, error) {
 	return vms, nil
 }
 
-func query(ctx context.Context, path string, options ...string) ([]byte, error) {
-	return queryLocked(ctx, nil, path, options...)
-}
-
-func queryLocked(ctx context.Context, lock *os.File, path string, options ...string) ([]byte, error) {
+func query(ctx context.Context, lock *os.File, path string, options ...string) ([]byte, error) {
 	args := append([]string{"get", path, "--output-format", "json"}, options...)
 	cmd := exec.CommandContext(ctx, "/usr/bin/pvesh", args...)
 	return runCommand(ctx, cmd, lock)

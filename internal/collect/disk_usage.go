@@ -30,11 +30,6 @@ type usageProbe struct {
 	err   error
 }
 
-type usageJob struct {
-	partition  disk.PartitionStat
-	mountpoint string
-}
-
 type fsUsageReader struct {
 	timeout time.Duration
 	workers int
@@ -131,7 +126,7 @@ func (r *fsUsageReader) waitProbe(entry *usageEntry, probe *usageProbe, cached *
 }
 
 func (r *fsUsageReader) collect(parts []disk.PartitionStat, skipPseudo bool) []metrics.DiskUsage {
-	jobs := make([]usageJob, 0, len(parts))
+	jobs := make([]disk.PartitionStat, 0, len(parts))
 	seen := make(map[string]struct{}, len(parts))
 
 	for _, p := range parts {
@@ -146,37 +141,38 @@ func (r *fsUsageReader) collect(parts []disk.PartitionStat, skipPseudo bool) []m
 		if skipPseudo && isPseudoFsType(p.Fstype) {
 			continue
 		}
-		jobs = append(jobs, usageJob{partition: p, mountpoint: mp})
+		p.Mountpoint = mp
+		jobs = append(jobs, p)
 	}
 
 	if len(jobs) == 0 {
 		return nil
 	}
 
-	jobCh := make(chan usageJob)
+	jobCh := make(chan disk.PartitionStat)
 	resultCh := make(chan metrics.DiskUsage, len(jobs))
 	var wg sync.WaitGroup
 
 	for range min(r.workers, len(jobs)) {
 		wg.Go(func() {
 			for job := range jobCh {
-				usage, err := r.read(job.mountpoint)
+				usage, err := r.read(job.Mountpoint)
 				if err != nil || usage == nil {
 					continue
 				}
-				resultCh <- buildUsage(job.partition, job.mountpoint, usage)
+				resultCh <- buildUsage(job, usage)
 			}
 		})
 	}
 
-	go func() {
-		for _, job := range jobs {
-			jobCh <- job
-		}
-		close(jobCh)
-		wg.Wait()
-		close(resultCh)
-	}()
+	// Each job emits at most one result; the buffer lets workers finish before
+	// the caller drains it.
+	for _, job := range jobs {
+		jobCh <- job
+	}
+	close(jobCh)
+	wg.Wait()
+	close(resultCh)
 
 	out := make([]metrics.DiskUsage, 0, len(jobs))
 	for metric := range resultCh {
@@ -190,7 +186,7 @@ func (r *fsUsageReader) collect(parts []disk.PartitionStat, skipPseudo bool) []m
 	return out
 }
 
-func buildUsage(partition disk.PartitionStat, mountpoint string, usage *disk.UsageStat) metrics.DiskUsage {
+func buildUsage(partition disk.PartitionStat, usage *disk.UsageStat) metrics.DiskUsage {
 	var inodesTotal, inodesUsed, inodesFree uint64
 	var inodesUsedRatio float64
 	if usage.InodesTotal > 0 {
@@ -203,7 +199,7 @@ func buildUsage(partition disk.PartitionStat, mountpoint string, usage *disk.Usa
 	return metrics.DiskUsage{
 		Path:       usage.Path,
 		Device:     partition.Device,
-		Mountpoint: mountpoint,
+		Mountpoint: partition.Mountpoint,
 
 		Total:     usage.Total,
 		Used:      usage.Used,

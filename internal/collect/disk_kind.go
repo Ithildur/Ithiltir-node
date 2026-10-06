@@ -97,45 +97,6 @@ func kindInfo(kind string) diskKindInfo {
 	}
 }
 
-func normalizeKind(kind string) string {
-	return kindInfo(kind).logical
-}
-
-func supportsMounts(kind string) bool {
-	return kindInfo(kind).mounts
-}
-
-func logicalActionFor(kind string) logicalAction {
-	return kindInfo(kind).action
-}
-
-func isHigherLevel(kind string) bool {
-	return kindInfo(kind).higherLevel
-}
-
-func usesRaidDevices(kind string) bool {
-	return kindInfo(kind).raidDevices
-}
-
-func logicalPath(kind, name string) string {
-	if !kindInfo(kind).devicePath {
-		return ""
-	}
-	return buildDevicePath(name)
-}
-
-func refKind(kind string) string {
-	return kindInfo(kind).ref
-}
-
-func baseKindFor(kind string) string {
-	return kindInfo(kind).baseKind
-}
-
-func logicalKindScore(kind string) int {
-	return kindInfo(kind).roleScore
-}
-
 func rolePriority(role string) int {
 	if p, ok := rolePriorityLookup[role]; ok {
 		return p

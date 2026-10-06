@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"Ithiltir-node/internal/metrics"
-	"Ithiltir-node/internal/nodeiface"
 	"Ithiltir-node/internal/nodewire"
 	"Ithiltir-node/internal/reportcfg"
 	"Ithiltir-node/internal/selfupdate"
@@ -32,6 +31,18 @@ var (
 	staticChangeCheckMaxInterval = time.Minute
 	applyUpdate                  = selfupdate.Apply
 )
+
+type source interface {
+	Snapshot() *metrics.Snapshot
+	Time() time.Time
+	Version() string
+	Hostname() string
+	PushDelay() time.Duration
+}
+
+type staticSource interface {
+	Static() *metrics.Static
+}
 
 type logLimiter struct {
 	cooldown time.Duration
@@ -45,10 +56,6 @@ func (l *logLimiter) logf(format string, args ...any) {
 	}
 	l.last = now
 	log.Printf(format, args...)
-}
-
-func isConnRefused(err error) bool {
-	return errors.Is(err, syscall.ECONNREFUSED)
 }
 
 func isPlainHTTP(err error) bool {
@@ -135,25 +142,9 @@ func allowExpiredCertFallback(host, port string) bool {
 	return true
 }
 
-type fallbackDecision struct {
-	useHTTP        bool
-	expiredRefused bool
-}
-
-func stopTimer(t *time.Timer) {
-	if t == nil {
-		return
-	}
-	if !t.Stop() {
-		select {
-		case <-t.C:
-		default:
-		}
-	}
-}
-
 type agent struct {
-	source           nodeiface.PushSource
+	source           source
+	staticSource     staticSource
 	hostName         string
 	debug            bool
 	cache            *Cache
@@ -174,13 +165,17 @@ type target struct {
 	hostIsIP     bool
 	secret       string
 	requireHTTPS bool
-	static       *staticSync
 	staticWake   chan string
-	delivery     *delivery
 	rpc          rpcTarget
+
+	staticErrLimiter      logLimiter
+	errLimiter            logLimiter
+	connRefusedCount      int
+	connRefusedSuppressed bool
+	rpcFailed             bool
 }
 
-func newTarget(spec reportcfg.Target, staticSource nodeiface.StaticSource, requireHTTPS bool) (*target, error) {
+func newTarget(spec reportcfg.Target, requireHTTPS bool) (*target, error) {
 	mode, err := transportMode()
 	if err != nil {
 		return nil, err
@@ -197,16 +192,16 @@ func newTarget(spec reportcfg.Target, staticSource nodeiface.StaticSource, requi
 		return nil, fmt.Errorf("target %d host is required", spec.ID)
 	}
 	return &target{
-		rpc:          rpcTarget{mode: mode},
-		client:       &http.Client{Timeout: 10 * time.Second},
-		id:           spec.ID,
-		endpoint:     endpoint,
-		hostIsIP:     net.ParseIP(host) != nil,
-		secret:       spec.Key,
-		requireHTTPS: requireHTTPS,
-		static:       newStaticSync(staticSource),
-		staticWake:   make(chan string, 1),
-		delivery:     newDelivery(),
+		rpc:              rpcTarget{mode: mode},
+		client:           &http.Client{Timeout: 10 * time.Second},
+		id:               spec.ID,
+		endpoint:         endpoint,
+		hostIsIP:         net.ParseIP(host) != nil,
+		secret:           spec.Key,
+		requireHTTPS:     requireHTTPS,
+		staticWake:       make(chan string, 1),
+		staticErrLimiter: logLimiter{cooldown: time.Minute},
+		errLimiter:       logLimiter{cooldown: time.Minute},
 	}, nil
 }
 
@@ -263,164 +258,112 @@ func (t *target) endpointParts() (scheme string, host string, port string, hostP
 	return scheme, host, port, hostPort
 }
 
-func (t *target) httpFallback(err error) fallbackDecision {
-	scheme, host, port, _ := t.endpointParts()
-	if scheme != "https" || t.requireHTTPS {
-		return fallbackDecision{}
-	}
-	if isPlainHTTP(err) {
-		return fallbackDecision{useHTTP: true}
-	}
-	if t.hostIsIP && isCertError(err) {
-		return fallbackDecision{useHTTP: true}
-	}
-	if !t.hostIsIP && isExpiredCert(err) {
-		if allowExpiredCertFallback(host, port) {
-			return fallbackDecision{useHTTP: true}
-		}
-		return fallbackDecision{expiredRefused: true}
-	}
-	return fallbackDecision{}
-}
-
 func (t *target) fallbackHTTP(err error) bool {
 	// Automatic negotiation never permits a TLS-to-plaintext downgrade.
 	// Explicit HTTP mode retains the existing legacy HTTP fallback policy.
 	if t.rpc.mode != "http" {
 		return false
 	}
-	decision := t.httpFallback(err)
-	if decision.expiredRefused {
-		_, _, _, hostPort := t.endpointParts()
-		log.Printf("ERROR: push target %d https refused fallback, cert expired but chain invalid for %s", t.id, hostPort)
+	scheme, host, port, hostPort := t.endpointParts()
+	if scheme != "https" || t.requireHTTPS {
+		return false
 	}
-	if !decision.useHTTP {
+	allowed := isPlainHTTP(err) || t.hostIsIP && isCertError(err)
+	if !allowed && !t.hostIsIP && isExpiredCert(err) {
+		allowed = allowExpiredCertFallback(host, port)
+		if !allowed {
+			log.Printf("ERROR: push target %d https refused fallback, cert expired but chain invalid for %s", t.id, hostPort)
+		}
+	}
+	if !allowed {
 		return false
 	}
 	t.mu.Lock()
 	t.endpoint.Scheme = "http"
-	hostPort := t.endpoint.Host
+	hostPort = t.endpoint.Host
 	t.mu.Unlock()
 	log.Printf("WARN: push target %d https failed, fallback to http for %s", t.id, hostPort)
 	return true
 }
 
 func (t *target) wakeStatic(reason string) {
-	if t.static.source == nil {
-		return
-	}
 	select {
 	case t.staticWake <- reason:
 	default:
 	}
 }
 
-type staticSync struct {
-	source     nodeiface.StaticSource
-	errLimiter logLimiter
-}
-
-type staticState uint8
-
-const (
-	staticRetry staticState = iota
-	staticPartial
-	staticComplete
-)
-
-func newStaticSync(source nodeiface.StaticSource) *staticSync {
-	return &staticSync{
-		source:     source,
-		errLimiter: logLimiter{cooldown: time.Minute},
-	}
-}
-
-func (s *staticSync) prepare() (*metrics.Static, staticState, []string, error) {
-	snap := s.source.Static()
-	if err := validateStatic(snap); err != nil {
-		return nil, staticRetry, nil, err
-	}
-	missing := missingCompleteFields(snap)
-	if len(missing) == 0 {
-		return snap, staticComplete, missing, nil
-	}
-	return snap, staticPartial, missing, nil
-}
-
-func (s *staticSync) send(ctx context.Context, target *target, endpoint string, debug bool, reason string, snap *metrics.Static, state staticState, missing []string) error {
-	client, err := target.rpcClient(ctx)
+func (t *target) sendStatic(ctx context.Context, endpoint string, snap *metrics.Static) error {
+	client, err := t.rpcClient(ctx)
 	if err != nil {
 		return err
 	}
 	if client != nil {
-		err = target.rpcStatic(ctx, client, snap)
-	} else {
-		err = sendStatic(ctx, target.client, endpoint, target.secret, snap)
+		return t.rpcStatic(ctx, client, snap)
 	}
-	if err != nil {
-		return err
-	}
-	if debug {
-		if state == staticComplete {
-			log.Printf("push static ok target=%d (%s)", target.id, reason)
-		} else {
-			log.Printf("push static partial ok target=%d (%s), missing=%s", target.id, reason, strings.Join(missing, ", "))
-		}
-	}
-	return nil
+	return sendStatic(ctx, t.client, endpoint, t.secret, snap)
 }
 
-func (s *staticSync) run(ctx context.Context, target *target, debug bool, recordStatic func(*metrics.Static)) {
-	retry := s.sync(ctx, target, debug, "startup", recordStatic)
+func (a *agent) runStatic(ctx context.Context, target *target) {
+	timer := time.NewTimer(staticRetryDelay)
+	timer.Stop()
+	defer timer.Stop()
+	retry := a.syncStatic(ctx, target, "startup")
 	for {
 		var retryCh <-chan time.Time
-		var retryTimer *time.Timer
 		if retry {
-			retryTimer = time.NewTimer(staticRetryDelay)
-			retryCh = retryTimer.C
+			timer.Reset(staticRetryDelay)
+			retryCh = timer.C
 		}
 
 		select {
 		case reason := <-target.staticWake:
-			stopTimer(retryTimer)
-			retry = s.sync(ctx, target, debug, reason, recordStatic)
+			timer.Stop()
+			retry = a.syncStatic(ctx, target, reason)
 		case <-retryCh:
-			retry = s.sync(ctx, target, debug, "fallback", recordStatic)
+			retry = a.syncStatic(ctx, target, "fallback")
 		case <-ctx.Done():
-			stopTimer(retryTimer)
 			return
 		}
 	}
 }
 
-func (s *staticSync) sync(ctx context.Context, target *target, debug bool, reason string, recordStatic func(*metrics.Static)) bool {
-	snap, state, missing, err := s.prepare()
-	if err != nil {
-		s.errLimiter.logf("push static error target=%d (%s): %v", target.id, reason, err)
+func (a *agent) syncStatic(ctx context.Context, target *target, reason string) bool {
+	snap := a.staticSource.Static()
+	if err := validateStatic(snap); err != nil {
+		target.staticErrLimiter.logf("push static error target=%d (%s): %v", target.id, reason, err)
 		return true
 	}
+	missing := missingCompleteFields(snap)
 
 	endpoint := target.staticURL()
 	if endpoint == "" {
 		return false
 	}
 
-	err = s.send(ctx, target, endpoint, debug, reason, snap, state, missing)
+	err := target.sendStatic(ctx, endpoint, snap)
 	if err != nil {
-		s.errLimiter.logf("push static error target=%d (%s): %v", target.id, reason, err)
+		target.staticErrLimiter.logf("push static error target=%d (%s): %v", target.id, reason, err)
 		if target.fallbackHTTP(err) {
 			endpoint = target.staticURL()
-			err = s.send(ctx, target, endpoint, debug, reason, snap, state, missing)
+			err = target.sendStatic(ctx, endpoint, snap)
 			if err != nil {
-				s.errLimiter.logf("push static error target=%d (%s): %v", target.id, reason, err)
+				target.staticErrLimiter.logf("push static error target=%d (%s): %v", target.id, reason, err)
 			}
 		}
 	}
 
-	if err == nil && recordStatic != nil {
-		recordStatic(snap)
+	if err == nil {
+		if a.debug {
+			if len(missing) == 0 {
+				log.Printf("push static ok target=%d (%s)", target.id, reason)
+			} else {
+				log.Printf("push static partial ok target=%d (%s), missing=%s", target.id, reason, strings.Join(missing, ", "))
+			}
+		}
+		a.recordStaticFingerprint(snap)
 	}
-	return err != nil || state != staticComplete
+	return err != nil || len(missing) > 0
 }
 
 func staticChangeCheckInterval(reportInterval time.Duration) time.Duration {
@@ -430,30 +373,16 @@ func staticChangeCheckInterval(reportInterval time.Duration) time.Duration {
 	return min(staticChangeCheckMaxInterval, max(staticChangeCheckMinInterval, reportInterval*20))
 }
 
-type delivery struct {
-	errLimiter logLimiter
-
-	connRefusedCount      int
-	connRefusedSuppressed bool
-	rpcFailed             bool
-}
-
-func newDelivery() *delivery {
-	return &delivery{
-		errLimiter: logLimiter{cooldown: time.Minute},
-	}
-}
-
-func newAgent(specs []reportcfg.Target, interval time.Duration, s nodeiface.PushSource, debug bool, requireHTTPS bool, cache *Cache) (*agent, error) {
+func newAgent(specs []reportcfg.Target, interval time.Duration, s source, debug bool, requireHTTPS bool, cache *Cache) (*agent, error) {
 	hostName := s.Hostname()
 	if hostName == "" {
 		hostName = "unknown"
 	}
 
-	staticSource, _ := s.(nodeiface.StaticSource)
+	static, _ := s.(staticSource)
 	targets := make([]*target, 0, len(specs))
 	for _, spec := range specs {
-		target, err := newTarget(spec, staticSource, requireHTTPS)
+		target, err := newTarget(spec, requireHTTPS)
 		if err != nil {
 			return nil, err
 		}
@@ -461,6 +390,7 @@ func newAgent(specs []reportcfg.Target, interval time.Duration, s nodeiface.Push
 	}
 	a := &agent{
 		source:          s,
+		staticSource:    static,
 		hostName:        hostName,
 		debug:           debug,
 		cache:           cache,
@@ -484,12 +414,17 @@ func (a *agent) buildReport() (*metrics.NodeReport, []byte, error) {
 	if m == nil {
 		return nil, nil, nil
 	}
-	report := metrics.NewNodeReport(a.source.Version(), a.hostName, a.source.Time(), m)
+	report := &metrics.NodeReport{
+		Version:   a.source.Version(),
+		Hostname:  a.hostName,
+		Timestamp: a.source.Time(),
+		Metrics:   m,
+	}
 	body, err := json.Marshal(report)
 	if err != nil {
 		return nil, nil, err
 	}
-	return &report, body, nil
+	return report, body, nil
 }
 
 func sendReport(ctx context.Context, target *target, body []byte) (*http.Response, error) {
@@ -500,11 +435,7 @@ func sendReport(ctx context.Context, target *target, body []byte) (*http.Respons
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Node-Secret", target.secret)
 
-	resp, err := target.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	return resp, nil
+	return target.client.Do(req)
 }
 
 type Identity struct {
@@ -520,7 +451,7 @@ type identityResponse struct {
 }
 
 func FetchIdentity(ctx context.Context, spec reportcfg.Target, requireHTTPS bool) (Identity, error) {
-	target, err := newTarget(spec, nil, requireHTTPS)
+	target, err := newTarget(spec, requireHTTPS)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -590,26 +521,26 @@ func sendIdentity(ctx context.Context, target *target) (*http.Response, error) {
 	return target.client.Do(req)
 }
 
-func (s *delivery) handleError(ctx context.Context, target *target, err error) error {
+func (t *target) handleError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if target.fallbackHTTP(err) {
+	if t.fallbackHTTP(err) {
 		return nil
 	}
-	if isConnRefused(err) {
-		s.connRefusedCount++
-		if !s.connRefusedSuppressed && s.connRefusedCount >= 3 {
-			log.Printf("push target %d error: 对端端口未打开", target.id)
-			s.connRefusedSuppressed = true
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		t.connRefusedCount++
+		if !t.connRefusedSuppressed && t.connRefusedCount >= 3 {
+			log.Printf("push target %d error: 对端端口未打开", t.id)
+			t.connRefusedSuppressed = true
 			return nil
 		}
-		if !s.connRefusedSuppressed {
-			s.errLimiter.logf("push target %d error: %v", target.id, err)
+		if !t.connRefusedSuppressed {
+			t.errLimiter.logf("push target %d error: %v", t.id, err)
 		}
 		return nil
 	}
-	s.errLimiter.logf("push target %d error: %v", target.id, err)
+	t.errLimiter.logf("push target %d error: %v", t.id, err)
 	return nil
 }
 
@@ -661,23 +592,23 @@ func sameUpdateManifest(a, b *selfupdate.Manifest) bool {
 		a.Size == b.Size
 }
 
-func (s *delivery) handleResponse(resp *http.Response, target *target, debug bool) (bool, bool, *selfupdate.Manifest) {
+func (t *target) handleResponse(resp *http.Response, debug bool) (bool, bool, *selfupdate.Manifest) {
 	defer drainBody(resp)
 
 	if resp.StatusCode != http.StatusOK {
-		s.errLimiter.logf("push target %d non-200 status: %s", target.id, resp.Status)
+		t.errLimiter.logf("push target %d non-200 status: %s", t.id, resp.Status)
 		return false, false, nil
 	}
 
 	manifest := decodeMetricsResponse(resp)
-	recoverStatic := s.connRefusedSuppressed
-	if s.connRefusedSuppressed {
-		log.Printf("push target %d recovered: 对端已恢复", target.id)
+	recoverStatic := t.connRefusedSuppressed
+	if t.connRefusedSuppressed {
+		log.Printf("push target %d recovered: 对端已恢复", t.id)
 	}
-	s.connRefusedSuppressed = false
-	s.connRefusedCount = 0
+	t.connRefusedSuppressed = false
+	t.connRefusedCount = 0
 	if debug {
-		log.Printf("push target %d ok: %s", target.id, resp.Status)
+		log.Printf("push target %d ok: %s", t.id, resp.Status)
 	}
 	return true, recoverStatic, manifest
 }
@@ -705,7 +636,7 @@ func decodeMetricsResponse(resp *http.Response) *selfupdate.Manifest {
 	return parsed.Update
 }
 
-func StartWithCache(ctx context.Context, targets []reportcfg.Target, interval time.Duration, s nodeiface.PushSource, debug bool, requireHTTPS bool, cache *Cache) error {
+func StartWithCache(ctx context.Context, targets []reportcfg.Target, interval time.Duration, s source, debug bool, requireHTTPS bool, cache *Cache) error {
 	if interval <= 0 {
 		return fmt.Errorf("push interval must be positive")
 	}
@@ -720,7 +651,7 @@ func StartWithCache(ctx context.Context, targets []reportcfg.Target, interval ti
 		stop()
 		virtWG.Wait()
 		sessionWG.Wait()
-		agent.waitStatic()
+		agent.staticWG.Wait()
 		for _, target := range agent.targets {
 			target.closeRPC()
 		}
@@ -828,21 +759,21 @@ func (a *agent) sendTarget(ctx context.Context, target *target, body []byte) (bo
 		if ctx.Err() != nil {
 			return false, nil, ctx.Err()
 		}
-		target.delivery.errLimiter.logf("push target %d transport: %v", target.id, err)
+		target.errLimiter.logf("push target %d transport: %v", target.id, err)
 		return false, nil, nil
 	}
 	if client != nil {
 		manifest, err := target.rpcMetrics(ctx, client, body)
 		if err != nil {
-			target.delivery.rpcFailed = true
+			target.rpcFailed = true
 			if ctx.Err() != nil {
 				return false, nil, ctx.Err()
 			}
-			target.delivery.errLimiter.logf("push target %d RPC: %v", target.id, err)
+			target.errLimiter.logf("push target %d RPC: %v", target.id, err)
 			return false, nil, nil
 		}
-		if target.delivery.rpcFailed {
-			target.delivery.rpcFailed = false
+		if target.rpcFailed {
+			target.rpcFailed = false
 			target.wakeStatic("recovery")
 		}
 		if a.debug {
@@ -852,12 +783,12 @@ func (a *agent) sendTarget(ctx context.Context, target *target, body []byte) (bo
 	}
 	resp, err := sendReport(ctx, target, body)
 	if err != nil {
-		if err := target.delivery.handleError(ctx, target, err); err != nil {
+		if err := target.handleError(ctx, err); err != nil {
 			return false, nil, err
 		}
 		return false, nil, nil
 	}
-	ok, recoverStatic, manifest := target.delivery.handleResponse(resp, target, a.debug)
+	ok, recoverStatic, manifest := target.handleResponse(resp, a.debug)
 	if recoverStatic {
 		target.wakeStatic("recovery")
 	}
@@ -865,37 +796,18 @@ func (a *agent) sendTarget(ctx context.Context, target *target, body []byte) (bo
 }
 
 func (a *agent) startStatic(ctx context.Context, interval time.Duration) {
-	hasStatic := false
-	for _, target := range a.targets {
-		if target.static.source == nil {
-			continue
-		}
-		hasStatic = true
-		a.staticWG.Go(func() {
-			target.static.run(ctx, target, a.debug, a.recordStaticFingerprint)
-		})
-	}
-	if !hasStatic {
+	if a.staticSource == nil || len(a.targets) == 0 {
 		return
+	}
+	for _, target := range a.targets {
+		a.staticWG.Go(func() {
+			a.runStatic(ctx, target)
+		})
 	}
 
 	a.staticWG.Go(func() {
 		a.watchStaticChanges(ctx, staticChangeCheckInterval(interval))
 	})
-}
-
-func (a *agent) waitStatic() {
-	a.staticWG.Wait()
-}
-
-func (a *agent) staticSource() nodeiface.StaticSource {
-	for _, target := range a.targets {
-		if target.static.source == nil {
-			continue
-		}
-		return target.static.source
-	}
-	return nil
 }
 
 func (a *agent) recordStaticFingerprint(snap *metrics.Static) {
@@ -915,12 +827,7 @@ func (a *agent) recordStaticFingerprint(snap *metrics.Static) {
 }
 
 func (a *agent) staticChanged() (bool, error) {
-	source := a.staticSource()
-	if source == nil {
-		return false, nil
-	}
-
-	fp, ok, err := staticFingerprint(source.Static())
+	fp, ok, err := staticFingerprint(a.staticSource.Static())
 	if err != nil || !ok {
 		return false, err
 	}

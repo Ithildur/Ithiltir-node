@@ -31,28 +31,11 @@ func dropFS(fs metrics.DiskUsage) bool {
 }
 
 func fsRoleScore(fs metrics.DiskUsage) (int, bool) {
-	if score, ok := rootFSScore(fs); ok {
-		return score, true
-	}
-	if score, ok := pveFSScore(fs); ok {
-		return score, true
-	}
-	return 0, false
-}
-
-func rootFSScore(fs metrics.DiskUsage) (int, bool) {
-	if strings.TrimSpace(fs.Mountpoint) == "/" {
-		return rootRoleScore, true
-	}
-	return 0, false
-}
-
-func pveFSScore(fs metrics.DiskUsage) (int, bool) {
 	mp := strings.TrimSpace(fs.Mountpoint)
 	switch {
-	case mp == "/var/lib/vz":
-		return pveRoleScore, true
-	case strings.HasPrefix(mp, "/mnt/pve/"):
+	case mp == "/":
+		return rootRoleScore, true
+	case mp == "/var/lib/vz", strings.HasPrefix(mp, "/mnt/pve/"):
 		return pveRoleScore, true
 	default:
 		return 0, false

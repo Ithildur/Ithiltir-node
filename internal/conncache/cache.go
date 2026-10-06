@@ -33,7 +33,7 @@ func DefaultPath() string {
 
 func Read(path string, now time.Time) (tcp int, udp int, ok bool) {
 	b, err := os.ReadFile(path)
-	if err != nil || len(b) == 0 {
+	if err != nil {
 		return 0, 0, false
 	}
 

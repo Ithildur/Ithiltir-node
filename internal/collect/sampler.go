@@ -210,7 +210,7 @@ func NewSampler(fastInterval time.Duration, slowOffset time.Duration, pushDelay 
 		fastInterval = time.Second
 	}
 	mediumInterval := fastInterval * 8
-	slowInterval := minDuration(60*time.Second, fastInterval*20)
+	slowInterval := min(60*time.Second, fastInterval*20)
 	s := &Sampler{
 		cfg:            cfg,
 		fastInterval:   fastInterval,
@@ -497,20 +497,8 @@ func pickFsType(mountpoint string, mountpoints map[string]metrics.DiskMountpoint
 
 func buildStaticBaseIO(logical []logicalSnapshot, filesystems []metrics.DiskUsage) []metrics.StaticDiskBaseIO {
 	candidates := buildBaseIOCandidates(logical)
-
 	sortBaseIO(candidates, logical, filesystems)
-
-	out := make([]metrics.StaticDiskBaseIO, 0, len(candidates))
-	for _, c := range candidates {
-		out = append(out, metrics.StaticDiskBaseIO{
-			Kind:       c.Kind,
-			Name:       c.Name,
-			DevicePath: c.DevicePath,
-			Ref:        c.Ref,
-			Role:       c.Role,
-		})
-	}
-	return out
+	return candidates
 }
 
 func buildFilesystems(filesystems []metrics.DiskUsage) []metrics.DiskFilesystem {

@@ -62,35 +62,21 @@ func runCmd(timeout time.Duration, name string, args ...string) ([]byte, error) 
 }
 
 func parseU64(s string) uint64 {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0
-	}
-	u, _ := strconv.ParseUint(s, 10, 64)
+	u, _ := strconv.ParseUint(strings.TrimSpace(s), 10, 64)
 	return u
 }
 
 func parseFloat(s string) float64 {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0
-	}
-	f, _ := strconv.ParseFloat(s, 64)
+	f, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	return f
 }
 
 func parseBool01(s string) *bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	if s == "1" {
-		b := true
-		return &b
-	}
-	if s == "0" {
-		b := false
-		return &b
+	switch strings.TrimSpace(s) {
+	case "1":
+		return new(true)
+	case "0":
+		return new(false)
 	}
 	return nil
 }
@@ -111,13 +97,6 @@ func percentToRatio(p100 float64) float64 {
 		return 1
 	}
 	return p100 / 100.0
-}
-
-func minDuration(a, b time.Duration) time.Duration {
-	if a <= b {
-		return a
-	}
-	return b
 }
 
 func ceilRate(v float64) float64 {

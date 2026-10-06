@@ -1,7 +1,8 @@
 package collect
 
 import (
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,12 @@ func (s *ioSampler) sampleIO(preferredNICs []string) (map[string]metrics.DiskIO,
 
 	now := time.Now()
 	dt := now.Sub(s.lastIOTimestamp).Seconds()
+	if s.lastIOTimestamp.IsZero() || dt <= 0 {
+		// With no previous sample, each counter is compared with itself.
+		dt = 1
+		s.lastDiskIO = nil
+		s.lastNetIO = nil
+	}
 
 	currDisk, err := disk.IOCounters()
 	if err != nil {
@@ -64,57 +71,6 @@ func (s *ioSampler) sampleIO(preferredNICs []string) (map[string]metrics.DiskIO,
 	currNetMap := mergeNetCounters(currNet)
 
 	nics := selectedNICs(preferredNICs...)
-
-	if s.lastIOTimestamp.IsZero() || dt <= 0 {
-		s.lastIOTimestamp = now
-		s.lastDiskIO = currDisk
-		s.lastNetIO = make(map[string]gnet.IOCountersStat)
-
-		diskIO := make(map[string]metrics.DiskIO)
-		for name, d := range currDisk {
-			diskIO[name] = metrics.DiskIO{
-				ReadBytes:            d.ReadBytes,
-				WriteBytes:           d.WriteBytes,
-				ReadRateBytesPerSec:  0,
-				WriteRateBytesPerSec: 0,
-				IOPS:                 0,
-				ReadIOPS:             0,
-				WriteIOPS:            0,
-				UtilRatio:            0,
-				QueueLength:          0,
-				WaitMs:               0,
-				ServiceMs:            0,
-			}
-		}
-
-		netIO := make([]metrics.NetIO, 0, len(currNetMap))
-		for _, name := range sortedNetKeys(currNetMap) {
-			if nics != nil {
-				if _, ok := nics[name]; !ok {
-					continue
-				}
-			}
-			n := currNetMap[name]
-			s.lastNetIO[name] = n
-			netIO = append(netIO, metrics.NetIO{
-				Name:                  name,
-				BytesRecv:             n.BytesRecv,
-				BytesSent:             n.BytesSent,
-				RecvRateBytesPerSec:   0,
-				SentRateBytesPerSec:   0,
-				PacketsRecv:           n.PacketsRecv,
-				PacketsSent:           n.PacketsSent,
-				RecvRatePacketsPerSec: 0,
-				SentRatePacketsPerSec: 0,
-				ErrIn:                 n.Errin,
-				ErrOut:                n.Errout,
-				DropIn:                n.Dropin,
-				DropOut:               n.Dropout,
-			})
-		}
-
-		return diskIO, netIO
-	}
 
 	diskIO := make(map[string]metrics.DiskIO)
 	for name, curr := range currDisk {
@@ -131,12 +87,7 @@ func (s *ioSampler) sampleIO(preferredNICs []string) (map[string]metrics.DiskIO,
 		totalTimeDiff := safeDiffUint64(curr.ReadTime+curr.WriteTime, prev.ReadTime+prev.WriteTime)
 		weightedDiff := safeDiffUint64(curr.WeightedIO, prev.WeightedIO)
 
-		utilRatio := float64(ioTimeDiff) / (dt * 1000.0)
-		if utilRatio < 0 {
-			utilRatio = 0
-		} else if utilRatio > 1 {
-			utilRatio = 1
-		}
+		utilRatio := min(1, float64(ioTimeDiff)/(dt*1000.0))
 		queueLength := float64(weightedDiff) / (dt * 1000.0)
 		waitMs := 0.0
 		serviceMs := 0.0
@@ -170,7 +121,7 @@ func (s *ioSampler) sampleIO(preferredNICs []string) (map[string]metrics.DiskIO,
 	netIO := make([]metrics.NetIO, 0, len(currNetMap))
 	newLastNet := make(map[string]gnet.IOCountersStat)
 
-	for _, name := range sortedNetKeys(currNetMap) {
+	for _, name := range slices.Sorted(maps.Keys(currNetMap)) {
 		if nics != nil {
 			if _, ok := nics[name]; !ok {
 				continue
@@ -232,13 +183,4 @@ func mergeNetCounters(in []gnet.IOCountersStat) map[string]gnet.IOCountersStat {
 		}
 	}
 	return out
-}
-
-func sortedNetKeys(m map[string]gnet.IOCountersStat) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

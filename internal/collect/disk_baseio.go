@@ -7,33 +7,14 @@ import (
 	"Ithiltir-node/internal/metrics"
 )
 
-type baseIOCandidate struct {
-	Kind       string
-	Name       string
-	DevicePath string
-	Ref        string
-	Role       string
-
-	ReadBytes            uint64
-	WriteBytes           uint64
-	ReadRateBytesPerSec  float64
-	WriteRateBytesPerSec float64
-	ReadIOPS             float64
-	WriteIOPS            float64
-	IOPS                 float64
-	UtilRatio            float64
-	QueueLength          float64
-	WaitMs               float64
-	ServiceMs            float64
-}
-
-func buildBaseIOCandidates(logical []logicalSnapshot) []baseIOCandidate {
-	candidates := make([]baseIOCandidate, 0)
+func buildBaseIOCandidates(logical []logicalSnapshot) []metrics.StaticDiskBaseIO {
+	candidates := make([]metrics.StaticDiskBaseIO, 0, len(logical))
 	for _, l := range logical {
 		if strings.TrimSpace(l.Name) == "" {
 			continue
 		}
-		baseKind := baseKindFor(l.Kind)
+		info := kindInfo(l.Kind)
+		baseKind := info.baseKind
 		if baseKind == "" {
 			continue
 		}
@@ -42,17 +23,17 @@ func buildBaseIOCandidates(logical []logicalSnapshot) []baseIOCandidate {
 		if baseKind == "raid" {
 			devicePath = buildDevicePath(l.Name)
 		}
-		candidates = append(candidates, baseIOCandidate{
+		candidates = append(candidates, metrics.StaticDiskBaseIO{
 			Kind:       baseKind,
 			Name:       l.Name,
 			DevicePath: devicePath,
-			Ref:        buildRef(refKind(l.Kind), l.Name),
+			Ref:        buildRef(info.ref, l.Name),
 		})
 	}
 	return candidates
 }
 
-func sortBaseIO(candidates []baseIOCandidate, logical []logicalSnapshot, filesystems []metrics.DiskUsage) {
+func sortBaseIO(candidates []metrics.StaticDiskBaseIO, logical []logicalSnapshot, filesystems []metrics.DiskUsage) {
 	roleScores := buildRoleScores(logical, filesystems)
 	applyRoles(candidates, roleScores)
 
@@ -87,7 +68,7 @@ func buildBaseIO(logical []logicalSnapshot, physical []metrics.DiskPhysical, fil
 			if strings.TrimSpace(p.Name) == "" {
 				continue
 			}
-			candidates = append(candidates, baseIOCandidate{
+			candidates = append(candidates, metrics.StaticDiskBaseIO{
 				Kind:       "physical",
 				Name:       p.Name,
 				DevicePath: buildDevicePath(p.Name),
@@ -97,33 +78,20 @@ func buildBaseIO(logical []logicalSnapshot, physical []metrics.DiskPhysical, fil
 	}
 
 	sortBaseIO(candidates, logical, filesystems)
-	for i := range candidates {
-		candidates[i] = fillBaseIO(candidates[i], physMap, zfsRates)
-	}
 	out := make([]metrics.DiskBaseIO, 0, len(candidates))
 	for _, c := range candidates {
-		out = append(out, metrics.DiskBaseIO{
-			Kind:                 c.Kind,
-			Name:                 c.Name,
-			DevicePath:           c.DevicePath,
-			Ref:                  c.Ref,
-			ReadBytes:            c.ReadBytes,
-			WriteBytes:           c.WriteBytes,
-			ReadRateBytesPerSec:  c.ReadRateBytesPerSec,
-			WriteRateBytesPerSec: c.WriteRateBytesPerSec,
-			ReadIOPS:             c.ReadIOPS,
-			WriteIOPS:            c.WriteIOPS,
-			IOPS:                 c.IOPS,
-			UtilRatio:            c.UtilRatio,
-			QueueLength:          c.QueueLength,
-			WaitMs:               c.WaitMs,
-			ServiceMs:            c.ServiceMs,
-		})
+		out = append(out, fillBaseIO(c, physMap, zfsRates))
 	}
 	return out
 }
 
-func fillBaseIO(b baseIOCandidate, physMap map[string]metrics.DiskIO, zfsRates map[string]zfsIORates) baseIOCandidate {
+func fillBaseIO(candidate metrics.StaticDiskBaseIO, physMap map[string]metrics.DiskIO, zfsRates map[string]zfsIORates) metrics.DiskBaseIO {
+	b := metrics.DiskBaseIO{
+		Kind:       candidate.Kind,
+		Name:       candidate.Name,
+		DevicePath: candidate.DevicePath,
+		Ref:        candidate.Ref,
+	}
 	if b.Kind == "physical" || b.Kind == "raid" {
 		if st, ok := physMap[normalizeDeviceName(b.Name)]; ok {
 			b.ReadBytes = st.ReadBytes
@@ -156,10 +124,6 @@ func fillBaseIO(b baseIOCandidate, physMap map[string]metrics.DiskIO, zfsRates m
 func buildRoleScores(logical []logicalSnapshot, filesystems []metrics.DiskUsage) map[string]int {
 	scores := make(map[string]int)
 	for _, fs := range filesystems {
-		mp := strings.TrimSpace(fs.Mountpoint)
-		if mp == "" {
-			continue
-		}
 		score, ok := fsRoleScore(fs)
 		if !ok {
 			continue
@@ -226,7 +190,7 @@ func logicalNameForFS(fs metrics.DiskUsage, logical []logicalSnapshot) string {
 				continue
 			}
 		}
-		score := logicalKindScore(l.Kind)
+		score := kindInfo(l.Kind).roleScore
 		if score < 0 {
 			continue
 		}
@@ -238,8 +202,8 @@ func logicalNameForFS(fs metrics.DiskUsage, logical []logicalSnapshot) string {
 	return bestName
 }
 
-func applyRoles(candidates []baseIOCandidate, scores map[string]int) {
-	bestIdx := -1
+func applyRoles(candidates []metrics.StaticDiskBaseIO, scores map[string]int) {
+	bestIdx := 0
 	bestScore := 0
 	for i, c := range candidates {
 		score := scores[c.Name]
@@ -249,19 +213,8 @@ func applyRoles(candidates []baseIOCandidate, scores map[string]int) {
 		}
 	}
 
-	if bestIdx >= 0 {
-		for i := range candidates {
-			if i == bestIdx {
-				candidates[i].Role = "primary"
-			} else {
-				candidates[i].Role = "secondary"
-			}
-		}
-		return
-	}
-
 	for i := range candidates {
-		if i == 0 {
+		if i == bestIdx {
 			candidates[i].Role = "primary"
 		} else {
 			candidates[i].Role = "secondary"

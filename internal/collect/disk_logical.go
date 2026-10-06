@@ -18,7 +18,6 @@ type logicalSnapshot struct {
 	Free        uint64
 	UsedRatio   float64
 	Health      string
-	Level       string
 	Mountpoint  string
 	Mountpoints map[string]metrics.DiskMountpoint
 	Devices     []string
@@ -63,7 +62,7 @@ func buildLogicalMetrics(logical []logicalSnapshot) []metrics.DiskLogical {
 func buildLogical(storages []metrics.StorageUsage, raid raidSnapshot, filesystems []metrics.DiskUsage, aliases mapperAliases) []logicalSnapshot {
 	raidDevices := buildRaidDevices(raid)
 	mountMeta := buildMountMeta(filesystems)
-	seen := make(map[string]logicalSnapshot)
+	seen := make(map[string]struct{})
 	var logical []logicalSnapshot
 	var disks []logicalSnapshot
 
@@ -72,7 +71,7 @@ func buildLogical(storages []metrics.StorageUsage, raid raidSnapshot, filesystem
 		if _, ok := seen[key]; ok {
 			return
 		}
-		seen[key] = l
+		seen[key] = struct{}{}
 		logical = append(logical, l)
 	}
 
@@ -85,8 +84,13 @@ func buildLogical(storages []metrics.StorageUsage, raid raidSnapshot, filesystem
 		if s.Kind == "disk" && skipDisk(name, s.Mountpoints) {
 			continue
 		}
-		kind := normalizeKind(s.Kind)
-		devicePath := logicalPath(kind, name)
+		storageKind := kindInfo(s.Kind)
+		kind := storageKind.logical
+		info := kindInfo(kind)
+		var devicePath string
+		if info.devicePath {
+			devicePath = buildDevicePath(name)
+		}
 		if alias := mapperAlias(aliases, name, rawName); alias != "" {
 			name = filepath.Base(alias)
 			devicePath = alias
@@ -98,15 +102,14 @@ func buildLogical(storages []metrics.StorageUsage, raid raidSnapshot, filesystem
 			Kind:       kind,
 			Name:       name,
 			DevicePath: devicePath,
-			Ref:        buildRef(refKind(kind), name),
+			Ref:        buildRef(info.ref, name),
 			Total:      s.Total,
 			Used:       s.Used,
 			Free:       s.Free,
 			UsedRatio:  s.UsedRatio,
 			Health:     s.Health,
-			Level:      s.Level,
 		}
-		if supportsMounts(kind) {
+		if info.mounts {
 			ld.Mountpoints = buildMounts(s.Mountpoints, mountMeta)
 			ld.Mountpoint = firstMount(s.Mountpoints)
 		}
@@ -114,9 +117,9 @@ func buildLogical(storages []metrics.StorageUsage, raid raidSnapshot, filesystem
 			ld.Devices = uniqueStrings(s.Devices)
 		}
 
-		switch logicalActionFor(s.Kind) {
+		switch storageKind.action {
 		case logicalAdd:
-			if usesRaidDevices(s.Kind) {
+			if storageKind.raidDevices {
 				if devs, ok := raidDevices[normalizeDeviceName(name)]; ok && len(ld.Devices) == 0 {
 					ld.Devices = devs
 				}
@@ -129,7 +132,7 @@ func buildLogical(storages []metrics.StorageUsage, raid raidSnapshot, filesystem
 
 	hasHigherLevel := false
 	for _, l := range logical {
-		if isHigherLevel(l.Kind) {
+		if kindInfo(l.Kind).higherLevel {
 			hasHigherLevel = true
 			break
 		}

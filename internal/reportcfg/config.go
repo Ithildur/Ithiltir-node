@@ -94,30 +94,22 @@ func Save(path string, cfg Config) error {
 		return fmt.Errorf("create report config temp: %w", err)
 	}
 	tmpName := tmp.Name()
-	keep := false
-	defer func() {
-		if !keep {
-			_ = os.Remove(tmpName)
-		}
-	}()
+	defer os.Remove(tmpName)
+	defer tmp.Close()
 
 	if err := tmp.Chmod(fileMode); err != nil {
-		_ = tmp.Close()
 		return fmt.Errorf("chmod report config temp: %w", err)
 	}
 	enc := yaml.NewEncoder(tmp)
 	enc.SetIndent(2)
 	if err := enc.Encode(cfg); err != nil {
 		_ = enc.Close()
-		_ = tmp.Close()
 		return fmt.Errorf("encode report config: %w", err)
 	}
 	if err := enc.Close(); err != nil {
-		_ = tmp.Close()
 		return fmt.Errorf("close report config encoder: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
 		return fmt.Errorf("sync report config temp: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -128,10 +120,6 @@ func Save(path string, cfg Config) error {
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("rename report config: %w", err)
-	}
-	keep = true
-	if err := os.Chmod(path, fileMode); err != nil {
-		return fmt.Errorf("chmod report config: %w", err)
 	}
 	return nil
 }
@@ -237,12 +225,12 @@ func (cfg Config) Validate() error {
 		if strings.TrimSpace(target.Key) == "" {
 			return fmt.Errorf("report target %d key cannot be empty", target.ID)
 		}
-		if err := validateServerInstallID(target.ServerInstallID); err != nil {
-			return fmt.Errorf("report target %d server_install_id: %w", target.ID, err)
-		}
-		installID := strings.TrimSpace(target.ServerInstallID)
-		if installID == "" {
+		if target.ServerInstallID == "" {
 			continue
+		}
+		installID, err := NormalizeServerInstallID(target.ServerInstallID)
+		if err != nil {
+			return fmt.Errorf("report target %d server_install_id: %w", target.ID, err)
 		}
 		if existingID, ok := seenInstallIDs[installID]; ok {
 			return fmt.Errorf("report target server_install_id %s is duplicated by ids %d and %d", installID, existingID, target.ID)
@@ -278,14 +266,6 @@ func validateURL(raw string) error {
 		return fmt.Errorf("host is required")
 	}
 	return nil
-}
-
-func validateServerInstallID(id string) error {
-	if id == "" {
-		return nil
-	}
-	_, err := NormalizeServerInstallID(id)
-	return err
 }
 
 func NormalizeServerInstallID(id string) (string, error) {

@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"time"
 )
@@ -38,7 +39,7 @@ func (z *zfsIOSampler) trigger() {
 func (z *zfsIOSampler) snapshot() map[string]zfsIORates {
 	z.mu.RLock()
 	defer z.mu.RUnlock()
-	return cloneZFSIORates(z.rates)
+	return maps.Clone(z.rates)
 }
 
 func (z *zfsIOSampler) hasRates() bool {
@@ -69,17 +70,6 @@ func (z *zfsIOSampler) run(ctx context.Context, interval time.Duration, enabled 
 
 func (z *zfsIOSampler) setRates(next map[string]zfsIORates) {
 	z.mu.Lock()
-	z.rates = cloneZFSIORates(next)
+	z.rates = maps.Clone(next)
 	z.mu.Unlock()
-}
-
-func cloneZFSIORates(in map[string]zfsIORates) map[string]zfsIORates {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]zfsIORates, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
 }

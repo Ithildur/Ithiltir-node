@@ -12,8 +12,18 @@ import (
 	"time"
 
 	"Ithiltir-node/internal/metrics"
-	"Ithiltir-node/internal/nodeiface"
 )
+
+type source interface {
+	Snapshot() *metrics.Snapshot
+	Time() time.Time
+	Version() string
+	Hostname() string
+}
+
+type staticSource interface {
+	Static() *metrics.Static
+}
 
 //go:embed localpage/page.html localpage/assets/*
 var localPageFiles embed.FS
@@ -25,14 +35,18 @@ type localPage struct {
 	assets fs.FS
 }
 
-func metricsHandler(s nodeiface.ReportSource, debug bool) http.HandlerFunc {
+func metricsHandler(s source, debug bool) http.HandlerFunc {
 	return reportHandler(func() *metrics.NodeReport {
 		m := s.Snapshot()
 		if m == nil {
 			return nil
 		}
-		report := metrics.NewNodeReport(s.Version(), s.Hostname(), s.Time(), m)
-		return &report
+		return &metrics.NodeReport{
+			Version:   s.Version(),
+			Hostname:  s.Hostname(),
+			Timestamp: s.Time(),
+			Metrics:   m,
+		}
 	}, debug)
 }
 
@@ -55,7 +69,7 @@ func reportHandler(reportFn func() *metrics.NodeReport, debug bool) http.Handler
 	}
 }
 
-func staticHandler(source nodeiface.StaticSource, debug bool) http.HandlerFunc {
+func staticHandler(source staticSource, debug bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !allowGET(w, r) {
 			return
@@ -105,13 +119,9 @@ func mustSubFS(fsys fs.FS, dir string) fs.FS {
 	return sub
 }
 
-func defaultLocalPage() fs.FS {
-	return mustSubFS(localPageFiles, "localpage")
-}
-
 func defaultPage() localPage {
 	return localPage{
-		root:   defaultLocalPage(),
+		root:   mustSubFS(localPageFiles, "localpage"),
 		assets: mustSubFS(localPageFiles, "localpage/assets"),
 	}
 }
@@ -185,7 +195,7 @@ func assetHandler(prefix string, fsys fs.FS) http.HandlerFunc {
 	}
 }
 
-func NewServer(listenIP, listenPort string, s nodeiface.ReportSource, debug bool) (*http.Server, string) {
+func NewServer(listenIP, listenPort string, s source, debug bool) (*http.Server, string) {
 	mux := http.NewServeMux()
 	localPage := resolveLocalPage()
 	pageHandler := localHandler(localPage.root)
@@ -193,29 +203,23 @@ func NewServer(listenIP, listenPort string, s nodeiface.ReportSource, debug bool
 	mux.HandleFunc("/local", exact("/local", pageHandler))
 	mux.HandleFunc("/local-assets/", assetHandler("/local-assets/", localPage.assets))
 	mux.HandleFunc("/metrics", exact("/metrics", metricsHandler(s, debug)))
-	staticSource, _ := s.(nodeiface.StaticSource)
-	mux.HandleFunc("/static", exact("/static", staticHandler(staticSource, debug)))
+	static, _ := s.(staticSource)
+	mux.HandleFunc("/static", exact("/static", staticHandler(static, debug)))
 
-	addr := net.JoinHostPort(listenIP, listenPort)
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-	return srv, addr
+	return newServer(listenIP, listenPort, mux)
 }
 
 func NewPushServer(listenIP, listenPort string, reportFn func() *metrics.NodeReport) (*http.Server, string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", exact("/", reportHandler(reportFn, true)))
+	return newServer(listenIP, listenPort, mux)
+}
 
+func newServer(listenIP, listenPort string, handler http.Handler) (*http.Server, string) {
 	addr := net.JoinHostPort(listenIP, listenPort)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,

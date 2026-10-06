@@ -49,10 +49,6 @@ func Read(path string, now time.Time) metrics.DiskSMART {
 		}
 		return smartStatus(metrics.StatusError)
 	}
-	if len(b) == 0 {
-		return smartStatus(metrics.StatusError)
-	}
-
 	var c Cache
 	if err := json.Unmarshal(b, &c); err != nil {
 		return smartStatus(metrics.StatusError)

@@ -117,9 +117,6 @@ func memberDisk(d lsblkDev) metrics.StorageUsage {
 		Model:      strings.TrimSpace(d.Model),
 		Serial:     strings.TrimSpace(d.Serial),
 		Rotational: parseBool01(d.Rota),
-		Used:       0,
-		Free:       0,
-		UsedRatio:  0,
 	}
 }
 

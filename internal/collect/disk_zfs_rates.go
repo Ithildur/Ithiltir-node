@@ -10,7 +10,6 @@ type zfsIORates struct {
 }
 
 func parseZFSIORates(s string) map[string]zfsIORates {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
 	type agg struct {
 		rBpsSum  float64
 		wBpsSum  float64
@@ -19,26 +18,18 @@ func parseZFSIORates(s string) map[string]zfsIORates {
 		n        float64
 	}
 
-	seenFirst := make(map[string]bool)
 	acc := make(map[string]*agg)
-	for _, line := range lines {
-		fields := strings.Fields(strings.TrimSpace(line))
+	for line := range strings.SplitSeq(s, "\n") {
+		fields := strings.Fields(line)
 		if len(fields) < 7 {
 			continue
 		}
-		pool := strings.TrimSpace(fields[0])
-		if pool == "" {
-			continue
-		}
-		if !seenFirst[pool] {
-			seenFirst[pool] = true
-			continue
-		}
-
+		pool := fields[0]
 		a := acc[pool]
 		if a == nil {
-			a = &agg{}
-			acc[pool] = a
+			// The first sample reports lifetime averages, not interval rates.
+			acc[pool] = new(agg)
+			continue
 		}
 		a.rIOPSSum += parseFloat(fields[3])
 		a.wIOPSSum += parseFloat(fields[4])

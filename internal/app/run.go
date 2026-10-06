@@ -31,22 +31,18 @@ func Run(rawArgs []string) int {
 		log.Printf("WARN: %s", warning)
 	}
 	if showVersion {
-		fmt.Println(VersionString())
+		fmt.Println(Version)
 		return 0
 	}
 
-	cfg := collect.Config{}
-	if len(preferredNICs) > 0 {
-		cfg.PreferredNICs = preferredNICs
-	}
-	cfg.Debug = debug
+	cfg := collect.Config{PreferredNICs: preferredNICs, Debug: debug}
 
 	if len(args) == 0 || args[0] == "local" {
-		return runLocal(args, cfg, debug)
+		return runLocal(args, cfg)
 	}
 
 	if args[0] == "push" {
-		return runPush(args, cfg, debug, requireHTTPS)
+		return runPush(args, cfg, requireHTTPS)
 	}
 
 	if args[0] == "report" {
@@ -57,7 +53,7 @@ func Run(rawArgs []string) int {
 	return 1
 }
 
-func runLocal(args []string, cfg collect.Config, debug bool) int {
+func runLocal(args []string, cfg collect.Config) int {
 	listenIP := "0.0.0.0"
 	listenPort := "9100"
 
@@ -80,7 +76,7 @@ func runLocal(args []string, cfg collect.Config, debug bool) int {
 	s.Start()
 	defer s.Stop()
 
-	srv, addr := server.NewServer(listenIP, listenPort, s, debug)
+	srv, addr := server.NewServer(listenIP, listenPort, s, cfg.Debug)
 	log.Printf("Ithiltir-node (local mode) listening on %s", addr)
 
 	errCh := make(chan error, 1)
@@ -108,7 +104,7 @@ func runLocal(args []string, cfg collect.Config, debug bool) int {
 	}
 }
 
-func runPush(args []string, cfg collect.Config, debug bool, requireHTTPS bool) int {
+func runPush(args []string, cfg collect.Config, requireHTTPS bool) int {
 	if len(args) > 2 {
 		fmt.Println("Usage: ./node push [interval_seconds] [--net iface1,iface2] [--debug] [--require-https]")
 		fmt.Println("Report targets are read from " + reportcfg.DefaultPath())
@@ -145,8 +141,8 @@ func runPush(args []string, cfg collect.Config, debug bool, requireHTTPS bool) i
 
 	var cache *push.Cache
 	var srv *http.Server
-	if debug {
-		cache = push.NewCache()
+	if cfg.Debug {
+		cache = new(push.Cache)
 		listenPort := "9101"
 		if envPort := os.Getenv("NODE_PORT"); envPort != "" {
 			listenPort = envPort
@@ -160,8 +156,12 @@ func runPush(args []string, cfg collect.Config, debug bool, requireHTTPS bool) i
 			if m == nil {
 				return nil
 			}
-			report := metrics.NewNodeReport(s.Version(), s.Hostname(), s.Time(), m)
-			return &report
+			return &metrics.NodeReport{
+				Version:   s.Version(),
+				Hostname:  s.Hostname(),
+				Timestamp: s.Time(),
+				Metrics:   m,
+			}
 		}
 		var addr string
 		srv, addr = server.NewPushServer("127.0.0.1", listenPort, localReport)
@@ -185,7 +185,7 @@ func runPush(args []string, cfg collect.Config, debug bool, requireHTTPS bool) i
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- push.StartWithCache(ctx, reportConfig.Targets, interval, s, debug, requireHTTPS, cache)
+		errCh <- push.StartWithCache(ctx, reportConfig.Targets, interval, s, cfg.Debug, requireHTTPS, cache)
 	}()
 
 	select {

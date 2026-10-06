@@ -45,7 +45,7 @@ func TestVirtPushUsesSeparateAuthenticatedEndpoint(t *testing.T) {
 			}))
 			defer server.Close()
 			ctx, cancel := context.WithCancel(t.Context())
-			destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/prefix/api/node/metrics", Key: "test-secret"}, nil, false)
+			destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/prefix/api/node/metrics", Key: "test-secret"}, false)
 			if err != nil {
 				t.Fatal(err)
 			}

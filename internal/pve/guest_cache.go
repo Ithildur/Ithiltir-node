@@ -103,7 +103,7 @@ func collectGuests(ctx context.Context, dir string, snapshot virt.Snapshot, look
 	}
 	defer lock.Close()
 	type candidate struct {
-		vm   virt.VM
+		id   int
 		next time.Time
 	}
 	var candidates []candidate
@@ -117,20 +117,20 @@ func collectGuests(ctx context.Context, dir string, snapshot virt.Snapshot, look
 			continue
 		}
 		if !now.Before(state.Next) {
-			candidates = append(candidates, candidate{vm, state.Next})
+			candidates = append(candidates, candidate{vm.ID, state.Next})
 		}
 	}
 	slices.SortStableFunc(candidates, func(a, b candidate) int { return a.next.Compare(b.next) })
-	jobs := make(chan virt.VM)
+	jobs := make(chan int)
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
-			for vm := range jobs {
+			for id := range jobs {
 				if ctx.Err() != nil {
 					continue
 				}
-				if err := queryGuest(ctx, dir, snapshot.Host, vm, lookup); err != nil {
-					log.Printf("guest VM %d: %v", vm.ID, err)
+				if err := queryGuest(ctx, dir, snapshot.Host, id, lookup); err != nil {
+					log.Printf("guest VM %d: %v", id, err)
 				}
 			}
 		})
@@ -138,7 +138,7 @@ func collectGuests(ctx context.Context, dir string, snapshot virt.Snapshot, look
 send:
 	for _, candidate := range candidates {
 		select {
-		case jobs <- candidate.vm:
+		case jobs <- candidate.id:
 		case <-ctx.Done():
 			break send
 		}
@@ -148,8 +148,8 @@ send:
 	return ctx.Err()
 }
 
-func queryGuest(ctx context.Context, dir, host string, vm virt.VM, lookup func(context.Context, string, int, *os.File) ([]string, error)) error {
-	base := filepath.Join(dir, strconv.Itoa(vm.ID))
+func queryGuest(ctx context.Context, dir, host string, id int, lookup func(context.Context, string, int, *os.File) ([]string, error)) error {
+	base := filepath.Join(dir, strconv.Itoa(id))
 	lock, err := guestLock(base + ".lock")
 	if err != nil || lock == nil {
 		return err
@@ -179,7 +179,7 @@ func queryGuest(ctx context.Context, dir, host string, vm virt.VM, lookup func(c
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	ips, err := lookup(queryCtx, host, vm.ID, lock)
+	ips, err := lookup(queryCtx, host, id, lock)
 	if err != nil {
 		return err
 	}

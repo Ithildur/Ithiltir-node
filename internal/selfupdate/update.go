@@ -323,32 +323,21 @@ func writeFileAtomic(dir, path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	tmpPath := tmp.Name()
-	keep := false
-	defer func() {
-		if !keep {
-			_ = os.Remove(tmpPath)
-		}
-	}()
+	defer os.Remove(tmpPath)
+	defer tmp.Close()
 	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	keep = true
-	return nil
+	return os.Rename(tmpPath, path)
 }
 
 func download(ctx context.Context, m Manifest, f *os.File, mode os.FileMode) error {

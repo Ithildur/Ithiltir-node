@@ -7,27 +7,11 @@ import (
 	"Ithiltir-node/internal/metrics"
 )
 
-type staticError struct {
-	fields []string
-}
-
-func (e *staticError) Error() string {
-	return fmt.Sprintf("static snapshot missing required fields: %s", strings.Join(e.fields, ", "))
-}
-
 func validateStatic(snap *metrics.Static) error {
 	if snap == nil {
 		return fmt.Errorf("static snapshot not ready")
 	}
 
-	missing := missingPublishFields(snap)
-	if len(missing) > 0 {
-		return &staticError{fields: missing}
-	}
-	return nil
-}
-
-func missingPublishFields(snap *metrics.Static) []string {
 	missing := make([]string, 0, 3)
 	if strings.TrimSpace(snap.Version) == "" {
 		missing = append(missing, "version")
@@ -38,7 +22,10 @@ func missingPublishFields(snap *metrics.Static) []string {
 	if snap.ReportIntervalSeconds <= 0 {
 		missing = append(missing, "report_interval_seconds")
 	}
-	return missing
+	if len(missing) > 0 {
+		return fmt.Errorf("static snapshot missing required fields: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 func missingCompleteFields(snap *metrics.Static) []string {

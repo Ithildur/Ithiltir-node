@@ -315,15 +315,6 @@ type NodeReport struct {
 	Metrics   *Snapshot `json:"metrics"`
 }
 
-func NewNodeReport(version, hostname string, timestamp time.Time, snapshot *Snapshot) NodeReport {
-	return NodeReport{
-		Version:   version,
-		Hostname:  hostname,
-		Timestamp: timestamp,
-		Metrics:   snapshot,
-	}
-}
-
 func (s *Snapshot) Clone() *Snapshot {
 	if s == nil {
 		return nil

@@ -100,7 +100,7 @@ main {
 }
 
 .cmd-line {
-  margin: 0;
+  margin: 24px 0 10px;
   font-size: 15px;
   word-break: break-all;
 }
@@ -114,11 +114,6 @@ main {
 .shell-path {
   color: var(--accent);
   font-weight: 700;
-}
-
-.cmd-line {
-  margin-top: 24px;
-  margin-bottom: 10px;
 }
 
 .term-body > .cmd-line:first-child {

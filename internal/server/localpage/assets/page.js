@@ -93,22 +93,6 @@
     return Number.isFinite(Number(value)) ? Number(value).toLocaleString("en-US") : "--";
   }
 
-  function sum(list, pick) {
-    return Array.isArray(list) ? list.reduce((total, item) => total + num(pick(item)), 0) : 0;
-  }
-
-  function avg(list, pick) {
-    return Array.isArray(list) && list.length ? sum(list, pick) / list.length : 0;
-  }
-
-  function bestDiskRatio(disk) {
-    const items = [
-      ...((disk && Array.isArray(disk.filesystems)) ? disk.filesystems : []),
-      ...((disk && Array.isArray(disk.logical)) ? disk.logical : [])
-    ];
-    return items.length ? Math.max(...items.map((item) => ratio(item.used_ratio))) : 0;
-  }
-
   function keyOf(item) {
     return item?.mountpoint || item?.path || item?.name || item?.device || item?.device_path || item?.ref || "";
   }
@@ -136,7 +120,8 @@
   }
 
   function waitText(disks) {
-    const wait = avg(disks, (item) => item.wait_ms);
+    if (!disks.length) return "--";
+    const wait = disks.reduce((total, item) => total + num(item.wait_ms), 0) / disks.length;
     return wait > 0 ? `${wait.toFixed(wait >= 10 ? 0 : 2)} ms` : "--";
   }
 
@@ -173,7 +158,9 @@
     const totalLookup = staticTotalLookup(stat, fsRows.length ? "filesystems" : "logical");
     const cpu = ratio(metrics.cpu?.usage_ratio);
     const mem = ratio(metrics.memory?.used_ratio);
-    const diskRatio = bestDiskRatio(disk);
+    const diskRatio = [...fsRows, ...logicalRows].reduce(
+      (highest, item) => Math.max(highest, ratio(item.used_ratio)), 0
+    );
 
     return {
       hostname: report.hostname || "--",
@@ -215,16 +202,10 @@
   }
 
   function raidRows(raid) {
-    if (!raid || !raid.supported) {
-      return [];
-    }
-    if (!raid.available) {
+    if (!raid?.supported || !raid.available) {
       return [];
     }
     const arrays = Array.isArray(raid.arrays) ? raid.arrays : [];
-    if (!arrays.length) {
-      return [];
-    }
     return arrays.slice(0, 8).map((item) => ({
       name: item.name || "--",
       mid: item.status || item.sync_status || "--",

@@ -41,7 +41,7 @@ func NewClient(path string) *Client {
 	probe.MaxConnsPerHost, probe.MaxIdleConnsPerHost = 1, 1
 	return &Client{
 		history: &http.Client{Transport: transport, Timeout: 10 * time.Second},
-		probe:   &http.Client{Transport: probe, Timeout: time.Second},
+		probe:   &http.Client{Transport: probe},
 	}
 }
 func (c *Client) Close() {

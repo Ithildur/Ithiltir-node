@@ -92,7 +92,7 @@ func TestRPCReportsShareConnectionAndPreserveUpdate(t *testing.T) {
 	var posts atomic.Int32
 	server := rpcHTTPServer(t, service, &posts)
 	spec := reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}
-	destination, err := newTarget(spec, nil, false)
+	destination, err := newTarget(spec, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestRPCDoesNotReplayUncertainReportOverHTTP(t *testing.T) {
 	service := &testRPC{metricsErr: status.Error(codes.Unavailable, "ack lost")}
 	var posts atomic.Int32
 	server := rpcHTTPServer(t, service, &posts)
-	destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, nil, false)
+	destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestRPCAutoStopsAfterCooldownAuthenticationFailure(t *testing.T) {
 			service := &testRPC{identifyErr: status.Error(code, "rejected")}
 			var posts atomic.Int32
 			server := rpcHTTPServer(t, service, &posts)
-			destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, nil, false)
+			destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -185,7 +185,7 @@ func TestRPCAutoSelectsHTTPBeforeReportingToLegacyDash(t *testing.T) {
 	service := &testRPC{identifyErr: status.Error(codes.Unimplemented, "legacy")}
 	var posts atomic.Int32
 	server := rpcHTTPServer(t, service, &posts)
-	destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, nil, false)
+	destination, err := newTarget(reportcfg.Target{ID: 1, URL: server.URL + "/api/node/metrics", Key: "secret"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestRPCAutoTLSFailureCannotDowngradeToPlaintext(t *testing.T) {
 	t.Setenv("ITHILTIR_NODE_TRANSPORT", "auto")
 	var posts atomic.Int32
 	server := rpcHTTPServer(t, new(testRPC), &posts)
-	destination, err := newTarget(reportcfg.Target{ID: 1, URL: strings.Replace(server.URL, "http://", "https://", 1) + "/api/node/metrics", Key: "secret"}, nil, false)
+	destination, err := newTarget(reportcfg.Target{ID: 1, URL: strings.Replace(server.URL, "http://", "https://", 1) + "/api/node/metrics", Key: "secret"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

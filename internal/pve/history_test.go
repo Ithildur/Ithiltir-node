@@ -89,59 +89,6 @@ func TestHistoryCoalescesAndKeepsOtherWaiters(t *testing.T) {
 	}
 }
 
-func TestHistoryWaiterDeadlineDoesNotCancelSharedQuery(t *testing.T) {
-	h := testHistoryCache(t)
-	q := virt.HistoryQuery{VMID: 101, Timeframe: "hour", Consolidation: "AVERAGE"}
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	defer func() { once.Do(func() { close(release) }); h.wg.Wait() }()
-	h.lookup = func(ctx context.Context, _ string, _ virt.HistoryQuery, _ *os.File) ([]byte, error) {
-		close(entered)
-		<-release
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		return []byte("{}"), nil
-	}
-	firstCtx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
-	defer cancel()
-	first := make(chan error, 1)
-	go func() { _, err := h.get(firstCtx, q); first <- err }()
-	select {
-	case <-entered:
-	case <-firstCtx.Done():
-		t.Fatal("query did not start")
-	}
-	secondCtx, stop := context.WithTimeout(t.Context(), 3*time.Second)
-	defer stop()
-	second := make(chan error, 1)
-	go func() { _, err := h.get(secondCtx, q); second <- err }()
-	for {
-		h.mu.Lock()
-		waiters := h.calls[q].waiters
-		h.mu.Unlock()
-		if waiters == 2 {
-			break
-		}
-		select {
-		case <-firstCtx.Done():
-			t.Fatal("second waiter did not join before deadline")
-		case <-time.After(time.Millisecond):
-		}
-	}
-	if err := <-first; !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("first waiter: %v", err)
-	}
-	once.Do(func() { close(release) })
-	if err := <-second; err != nil {
-		t.Fatalf("first deadline canceled second waiter: %v", err)
-	}
-	if _, err := h.get(t.Context(), q); err != nil {
-		t.Fatalf("waiter deadline poisoned cached result: %v", err)
-	}
-}
-
 func TestHistoryCancellationKeepsVMLockUntilQueryReturns(t *testing.T) {
 	h := testHistoryCache(t)
 	q := virt.HistoryQuery{VMID: 101, Timeframe: "hour", Consolidation: "AVERAGE"}

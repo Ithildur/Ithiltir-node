@@ -78,10 +78,8 @@ func (h *historyCache) get(ctx context.Context, q virt.HistoryQuery) ([]byte, er
 			return nil, virt.ErrBusy
 		}
 		// Evict completed entries only. Active work stays owned until reaped.
-		for len(h.calls) >= 128 {
-			if !h.evictOldest() {
-				break
-			}
+		if len(h.calls) >= 128 {
+			h.evictOldest()
 		}
 		// Execution belongs to the cache; individual waiters own only their wait.
 		callCtx, cancel := context.WithTimeout(h.ctx, 8*time.Second)
@@ -126,15 +124,14 @@ func (h *historyCache) run(ctx context.Context, q virt.HistoryQuery, call *histo
 		h.bytes -= len(raw)
 	}
 	for h.bytes > 16<<20 {
-		if !h.evictOldest() {
-			break
-		}
+		h.evictOldest()
 	}
 	close(call.done)
 }
 
-// evictOldest removes a completed entry while h.mu is held.
-func (h *historyCache) evictOldest() bool {
+// evictOldest requires h.mu and a completed entry: active calls are capped at
+// 32 of 128 entries, and only completed calls contribute to h.bytes.
+func (h *historyCache) evictOldest() {
 	var oldest *historyCall
 	var key virt.HistoryQuery
 	for candidateKey, candidate := range h.calls {
@@ -142,12 +139,8 @@ func (h *historyCache) evictOldest() bool {
 			oldest, key = candidate, candidateKey
 		}
 	}
-	if oldest == nil {
-		return false
-	}
 	h.bytes -= len(oldest.raw)
 	delete(h.calls, key)
-	return true
 }
 
 func (h *historyCache) execute(ctx context.Context, q virt.HistoryQuery) ([]byte, error) {
@@ -200,7 +193,7 @@ func (h *historyCache) guest(ctx context.Context, host string, id int, lock *os.
 }
 
 func history(ctx context.Context, host string, q virt.HistoryQuery, lock *os.File) ([]byte, error) {
-	raw, err := queryLocked(ctx, lock, fmt.Sprintf("/nodes/%s/qemu/%d/rrddata", host, q.VMID), "--timeframe", q.Timeframe, "--cf", q.Consolidation)
+	raw, err := query(ctx, lock, fmt.Sprintf("/nodes/%s/qemu/%d/rrddata", host, q.VMID), "--timeframe", q.Timeframe, "--cf", q.Consolidation)
 	if err != nil {
 		return nil, err
 	}
