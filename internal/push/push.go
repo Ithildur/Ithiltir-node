@@ -25,6 +25,8 @@ import (
 	"Ithiltir-node/internal/selfupdate"
 )
 
+const metricsTimeout = 7 * time.Second
+
 var (
 	staticRetryDelay             = 10 * time.Second
 	staticChangeCheckMinInterval = 10 * time.Second
@@ -667,15 +669,23 @@ func StartWithCache(ctx context.Context, targets []reportcfg.Target, interval ti
 
 	agent.startStatic(runCtx, interval)
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
-			if err := agent.sendRound(runCtx); err != nil {
+		case <-timer.C:
+			started := time.Now()
+			retry, err := agent.sendRound(runCtx)
+			if err != nil {
 				return err
 			}
+			delay := interval
+			if retry {
+				delay = 0
+			}
+			// Keep the send cadence without queueing snapshots behind a slow request.
+			timer.Reset(max(0, delay-time.Since(started)))
 		case <-runCtx.Done():
 			return runCtx.Err()
 		}
@@ -684,46 +694,56 @@ func StartWithCache(ctx context.Context, targets []reportcfg.Target, interval ti
 
 type targetResult struct {
 	ok       bool
+	retry    bool
 	manifest *selfupdate.Manifest
 	err      error
 	secret   string
 }
 
-func (a *agent) sendRound(ctx context.Context) error {
+func (a *agent) sendRound(ctx context.Context) (bool, error) {
 	if len(a.targets) == 0 {
-		return nil
+		return false, nil
 	}
 
 	report, body, err := a.buildReport()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if report == nil {
-		return nil
+		return false, nil
 	}
 
 	results := make(chan targetResult, len(a.targets))
 	var wg sync.WaitGroup
 	for _, target := range a.targets {
 		wg.Go(func() {
-			ok, manifest, err := a.sendTarget(ctx, target, body)
-			results <- targetResult{ok: ok, manifest: manifest, err: err, secret: target.secret}
+			callCtx, cancel := context.WithTimeout(ctx, metricsTimeout)
+			defer cancel()
+			ok, manifest, err := a.sendTarget(callCtx, target, body)
+			timedOut := ctx.Err() == nil && errors.Is(callCtx.Err(), context.DeadlineExceeded)
+			if timedOut {
+				ok, err = false, nil
+				target.errLimiter.logf("push target %d timeout: %v", target.id, callCtx.Err())
+			}
+			results <- targetResult{ok: ok, retry: timedOut, manifest: manifest, err: err, secret: target.secret}
 		})
 	}
 	wg.Wait()
 	close(results)
 
 	success := false
+	retry := false
 	var update updatePlan
 	currentVersion := report.Version
 	for result := range results {
 		if result.err != nil {
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return false, ctx.Err()
 			}
-			return result.err
+			return false, result.err
 		}
 		success = success || result.ok
+		retry = retry || result.retry
 		update.add(currentVersion, result.manifest, result.secret)
 	}
 	if update.conflict {
@@ -737,7 +757,7 @@ func (a *agent) sendRound(ctx context.Context) error {
 		if err := applyUpdate(ctx, *update.manifest); err != nil {
 			if errors.Is(err, selfupdate.ErrRestart) {
 				log.Printf("node update staged: version=%s", update.manifest.Version)
-				return selfupdate.ErrRestart
+				return false, selfupdate.ErrRestart
 			}
 			a.roundErrLimiter.logf("push update failed: %v", err)
 		}
@@ -746,11 +766,11 @@ func (a *agent) sendRound(ctx context.Context) error {
 		if a.cache != nil {
 			a.cache.Set(report)
 		}
-		return nil
+		return retry, nil
 	}
 
 	a.roundErrLimiter.logf("push round failed: all %d targets failed", len(a.targets))
-	return nil
+	return retry, nil
 }
 
 func (a *agent) sendTarget(ctx context.Context, target *target, body []byte) (bool, *selfupdate.Manifest, error) {

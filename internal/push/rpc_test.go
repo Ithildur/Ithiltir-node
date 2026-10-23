@@ -65,7 +65,7 @@ func (s *testRPC) Virt(context.Context, *nodewire.Report) (*nodewire.Empty, erro
 	return &nodewire.Empty{}, nil
 }
 
-func rpcHTTPServer(t *testing.T, service *testRPC, posts *atomic.Int32) *httptest.Server {
+func rpcHTTPServer(t *testing.T, service nodewire.NodeServer, posts *atomic.Int32) *httptest.Server {
 	t.Helper()
 	rpc := grpc.NewServer()
 	nodewire.RegisterNodeServer(rpc, service)

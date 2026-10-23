@@ -37,6 +37,8 @@ Node metrics agent with two modes:
 - If a target URL ends with `/metrics`, static metadata is posted to the sibling `/static` URL
 - Debug local endpoint: `GET http://127.0.0.1:${NODE_PORT:-9101}/`
 - HTTPS targets can fall back to HTTP unless `--require-https` is set
+- Live metrics requests (HTTP/gRPC) time out after 7 seconds. If any target reaches this deadline, the next round starts immediately after the current round finishes. Otherwise, rounds follow the configured reporting interval, starting immediately if the interval has already elapsed.
+- Each round reads the latest snapshot without queuing old reports or overlapping rounds.
 
 Report target commands:
 

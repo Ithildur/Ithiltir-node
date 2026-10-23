@@ -232,4 +232,4 @@ Guest Agent IP 通过可选 `ips` 数组返回，每台 VM 最多 128 个不重�
 
 `Connect` 是 Node 主动建立的独立双向查询流，首条能力声明须在 5 秒内到达。重连替换该节点的旧会话。派发前及连接期间每秒复查凭据；双方每 20 秒发送心跳，60 秒无消息关闭连接，心跳不刷新指标和在线率。查询总预算 10 秒，每节点最多 32 个待完成查询，结果上限 2 MiB。断线使待完成查询失败，不自动重放。
 
-Node 设置 `ITHILTIR_NODE_TRANSPORT=http|grpc|auto` 选择传输，默认 `http` 以兼容已有安装。`grpc` 只使用 RPC；`auto` 在上报前探测 `Identify`，成功后该目标在进程生命周期内固定使用 gRPC，探测不可达或不兼容时可选择同 URL、同协议的 HTTP。鉴权/授权失败不切换到 HTTP。auto/grpc 不允许因 TLS 失败降级到明文；显式或默认 HTTP 保留原回退行为和 `--require-https` 限制。Node 禁用策略重试（gRPC 仍可透明重试确定尚未处理的调用），指标应答不确定时不跨传输重发，按原周期采集下一份指标；VM 快照继续按采样时间去重。
+Node 设置 `ITHILTIR_NODE_TRANSPORT=http|grpc|auto` 选择传输，默认 `http` 以兼容已有安装。`grpc` 只使用 RPC；`auto` 在上报前探测 `Identify`，成功后该目标在进程生命周期内固定使用 gRPC，探测不可达或不兼容时可选择同 URL、同协议的 HTTP。鉴权/授权失败不切换到 HTTP。auto/grpc 不允许因 TLS 失败降级到明文；显式或默认 HTTP 保留原回退行为和 `--require-https` 限制。Node 禁用 gRPC 策略重试（gRPC 仍可透明重试确定尚未处理的调用），指标应答不确定时不跨传输重发，后续轮次读取最新指标；VM 快照继续按采样时间去重。
