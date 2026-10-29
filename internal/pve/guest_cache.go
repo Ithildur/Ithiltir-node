@@ -3,6 +3,7 @@
 package pve
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,8 @@ type guestState struct {
 	Host        string    `json:"host"`
 	Next        time.Time `json:"next"`
 	Failures    int       `json:"failures"`
+	Start       uint64    `json:"start"`
+	Agent       string    `json:"agent,omitempty"`
 	CollectedAt time.Time `json:"collected_at"`
 	IPs         []string  `json:"ips"`
 }
@@ -81,19 +84,47 @@ func writeGuest(path string, state guestState) error {
 }
 
 func guestEligible(vm virt.VM) bool {
-	return vm.Status == "running" && !vm.Template && (vm.QMPStatus == "" || vm.QMPStatus == "running")
+	return vm.Status == "running" && !vm.Template && vm.QMPStatus == "running"
 }
 
-// CollectGuests uses a fresh inventory but never collects hot metrics itself.
+type guestTarget struct {
+	id    int
+	start uint64
+	agent string
+}
+
+// CollectGuests reads current configuration and boot identity so a newly
+// enabled agent or restarted VM does not inherit an old retry delay.
 func CollectGuests(ctx context.Context, dir string, snapshot virt.Snapshot) error {
-	return collectGuests(ctx, dir, snapshot, guestIPs)
-}
-
-func collectGuests(ctx context.Context, dir string, snapshot virt.Snapshot, lookup func(context.Context, string, int, *os.File) ([]string, error)) error {
 	now := time.Now().UTC()
 	if snapshot.Status != "ok" || snapshot.CollectedAt.After(now) || now.Sub(snapshot.CollectedAt) > time.Duration(snapshot.TTLSeconds)*time.Second {
 		return errors.New("guest collection requires a fresh successful inventory")
 	}
+	hostCPUs, err := hostCPUCount(ctx)
+	if err != nil {
+		return err
+	}
+	var targets []guestTarget
+	for _, vm := range snapshot.VMs {
+		if !guestEligible(vm) {
+			continue
+		}
+		config, err := readConfig(vm.ID, hostCPUs)
+		if err != nil {
+			log.Printf("guest VM %d config: %v", vm.ID, err)
+			continue
+		}
+		process, err := readProcess(vm.ID)
+		if err != nil {
+			log.Printf("guest VM %d process: %v", vm.ID, err)
+			continue
+		}
+		targets = append(targets, guestTarget{id: vm.ID, start: process.start, agent: config.agent})
+	}
+	return collectGuests(ctx, dir, snapshot.Host, targets, guestIPs)
+}
+
+func collectGuests(ctx context.Context, dir, host string, targets []guestTarget, lookup func(context.Context, guestTarget) ([]string, error)) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
@@ -103,42 +134,71 @@ func collectGuests(ctx context.Context, dir string, snapshot virt.Snapshot, look
 	}
 	defer lock.Close()
 	type candidate struct {
-		id   int
-		next time.Time
+		target   guestTarget
+		next     time.Time
+		priority int // healthy first, then first observations, then retries
 	}
+	now := time.Now().UTC()
 	var candidates []candidate
-	for _, vm := range snapshot.VMs {
-		if !guestEligible(vm) {
-			continue
-		}
-		state, err := readGuest(filepath.Join(dir, strconv.Itoa(vm.ID)+".json"))
+	for _, target := range targets {
+		path := filepath.Join(dir, strconv.Itoa(target.id)+".json")
+		state, err := readGuest(path)
 		if err != nil {
-			log.Printf("guest VM %d state: %v", vm.ID, err)
+			log.Printf("guest VM %d state: %v", target.id, err)
 			continue
 		}
-		if !now.Before(state.Next) {
-			candidates = append(candidates, candidate{vm.ID, state.Next})
+		if state.Host != host || state.Start != target.start || state.Agent != target.agent {
+			state = guestState{Host: host, Start: target.start, Agent: target.agent}
+			if err := writeGuest(path, state); err != nil {
+				return err
+			}
 		}
+		if target.agent == "" || now.Before(state.Next) {
+			continue
+		}
+		priority := 0
+		if state.CollectedAt.IsZero() {
+			priority = 1
+		}
+		if state.Failures > 0 {
+			priority = 2
+		}
+		candidates = append(candidates, candidate{target, state.Next, priority})
 	}
-	slices.SortStableFunc(candidates, func(a, b candidate) int { return a.next.Compare(b.next) })
-	jobs := make(chan int)
+	slices.SortStableFunc(candidates, func(a, b candidate) int {
+		return cmp.Or(cmp.Compare(a.priority, b.priority), a.next.Compare(b.next))
+	})
+	jobs := make(chan candidate)
+	retries := make(chan struct{}, 2)
 	var wg sync.WaitGroup
-	for range 4 {
+	for range 8 {
 		wg.Go(func() {
-			for id := range jobs {
+			for job := range jobs {
 				if ctx.Err() != nil {
 					continue
 				}
-				if err := queryGuest(ctx, dir, snapshot.Host, id, lookup); err != nil {
-					log.Printf("guest VM %d: %v", id, err)
+				retry := job.priority == 2
+				if retry {
+					select {
+					case retries <- struct{}{}:
+					default:
+						continue
+					}
+				}
+				err := queryGuest(ctx, dir, host, job.target, lookup)
+				if retry {
+					<-retries
+				}
+				if err != nil && ctx.Err() == nil {
+					log.Printf("guest VM %d: %v", job.target.id, err)
 				}
 			}
 		})
 	}
 send:
-	for _, candidate := range candidates {
+	for _, job := range candidates {
 		select {
-		case jobs <- candidate.id:
+		case jobs <- job:
 		case <-ctx.Done():
 			break send
 		}
@@ -148,13 +208,8 @@ send:
 	return ctx.Err()
 }
 
-func queryGuest(ctx context.Context, dir, host string, id int, lookup func(context.Context, string, int, *os.File) ([]string, error)) error {
-	base := filepath.Join(dir, strconv.Itoa(id))
-	lock, err := guestLock(base + ".lock")
-	if err != nil || lock == nil {
-		return err
-	}
-	defer lock.Close()
+func queryGuest(ctx context.Context, dir, host string, target guestTarget, lookup func(context.Context, guestTarget) ([]string, error)) error {
+	base := filepath.Join(dir, strconv.Itoa(target.id))
 	state, err := readGuest(base + ".json")
 	if err != nil {
 		return err
@@ -166,25 +221,27 @@ func queryGuest(ctx context.Context, dir, host string, id int, lookup func(conte
 	if now.Before(state.Next) {
 		return nil
 	}
-	if state.Host != host {
-		state = guestState{Host: host}
-	}
-	state.Failures = min(max(state.Failures, 0)+1, 4)
-	delay := min(5*time.Minute*time.Duration(1<<(state.Failures-1)), 30*time.Minute)
-	state.Next = now.Add(delay)
-	// Reserve the cooldown before launching: crashes and service timeouts must
-	// not cause an immediate retry when the next timer starts.
+	previous := state
+	state.Failures = min(max(state.Failures, 0)+1, 3)
+	state.Next = now.Add([]time.Duration{time.Minute, 2 * time.Minute, 5 * time.Minute}[state.Failures-1])
+	// Reserve before launching, so a helper crash cannot cause a retry storm.
 	if err := writeGuest(base+".json", state); err != nil {
 		return err
 	}
-	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	queryCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	ips, err := lookup(queryCtx, host, id, lock)
+	ips, err := lookup(queryCtx, target)
+	if ctx.Err() != nil {
+		// A service stop or round budget is not evidence of an unhealthy agent.
+		previous.Next = time.Now().Add(3 * time.Second)
+		return errors.Join(ctx.Err(), writeGuest(base+".json", previous))
+	}
 	if err != nil {
 		return err
 	}
+	state.Host, state.Start, state.Agent = host, target.start, target.agent
 	state.IPs, state.CollectedAt = ips, time.Now().UTC()
-	state.Failures, state.Next = 0, state.CollectedAt.Add(5*time.Minute)
+	state.Failures, state.Next = 0, state.CollectedAt.Add(time.Minute)
 	return writeGuest(base+".json", state)
 }
 
@@ -201,7 +258,7 @@ func AttachGuestIPs(dir, host string, vms []virt.VM, now time.Time) {
 			continue
 		}
 		// A sample older than the current boot cannot describe this guest.
-		if vm.Uptime == nil || state.CollectedAt.Before(now.Add(-time.Duration(*vm.Uptime)*time.Second)) {
+		if vm.Uptime == nil || vm.CollectedAt == nil || state.CollectedAt.Before(vm.CollectedAt.Add(-time.Duration(*vm.Uptime)*time.Second)) {
 			continue
 		}
 		vm.IPs, vm.IPsCollectedAt, vm.IPsTTLSeconds = state.IPs, &state.CollectedAt, int(guestTTL/time.Second)

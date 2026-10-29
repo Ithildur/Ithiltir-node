@@ -80,13 +80,15 @@
 
 ## PVE VM 监控
 
-普通 node 可选读取 root 采集缓存，不需要虚拟化版 node。Linux 安装命令追加 `--pve` 时，Dash 安装器安装预编译的 `pve-cache` 和 systemd 服务，node 仍以普通用户运行。Dash 发布包必须包含匹配版本的 helper；不需要现场编译、PVE 用户或 API Token。
+Node `0.3.0` 配套 Dash `0.4.0` 和同版本 `pve-cache`。已有 HTTP 宿主机上报保持兼容；VM 历史需要 `grpc` 或 `auto` 传输，以及正确转发 gRPC 服务路径的代理。
 
-手动部署时，root 将 `pve-cache` 放在普通 node 无法修改的目录，准备 root 所有、运行组可读的 `/run/ithiltir-node`，以 root 服务运行 `pve-cache --serve --group ithiltir`，由它持有基础采集、IP 慢采集及本地查询 socket。默认单次采集和 `--guest` 模式仍可用于手动采集。为 `node push` 设置 `ITHILTIR_NODE_VIRT_CACHE=/run/ithiltir-node/virt.json` 后启用独立 VM 上报。未设置时不读取缓存、不启动 VM 推送任务。`pve-cache --version` 返回与 node 相同的发布版本；node 自更新不更新 root 采集工具。
+普通 Node 可选读取 root helper 的 Unix socket，不需要虚拟化版 Node。Linux 安装命令追加 `--pve` 时，Dash 安装器安装预编译的 `pve-cache` 和 systemd 服务，Node 仍以普通用户运行。Dash 发布包必须包含匹配版本的 helper；不需要现场编译、PVE 用户或 API token。
 
-工具查询本机 QEMU VM 的完整状态，并用 PVE 资源统计补充 CPU 比例。磁盘和网络是累计字节数，未知指标保留缺失；失败保留最后成功的数据和时间。首版不包含 LXC、VM 历史、HA 配置或 VM 控制。协议见 [上报接口](docs/reporting_apis_CN.md#虚拟机快照)。
+手动部署时，root 将 `pve-cache` 放在普通 node 无法修改的目录，准备 root 所有、运行组可读的 `/run/ithiltir-node`，以 root 服务运行 `pve-cache --group ithiltir`，由它持有基础采集、IP 慢采集及本地查询 socket。为 `node push` 设置 `ITHILTIR_NODE_PVE_SOCKET=/run/ithiltir-node/pve.sock` 后启用独立 VM 上报。未设置时不读取缓存、不启动 VM 推送任务。`pve-cache --version` 返回与 node 相同的发布版本；node 自更新不更新 root 采集工具。
 
-Guest Agent IP 通过可选 `ips` 数组返回，每台 VM 最多 128 个不重复的 IPv4/IPv6 地址，包含私网地址，排除回环、链路本地、未指定、多播及非法地址。需要在 PVE 启用 Guest Agent，并在来宾内运行代理。IP 缺失不使基础采集失败。 IP 由 `pve-cache --serve` 内的独立慢任务采集（手动单次采集使用 `--guest`）：调度器在任务结束 60 秒后唤醒，成功的 VM 间隔 5 分钟再查，失败按 5、10、20、30 分钟退避（上限 30 分钟）。只查询新鲜清单中运行、非模板、未暂停的 VM。最多四路并发，单次查询超时 5 秒，慢任务总预算 50 秒。每台 VM 使用由查询进程继承的文件锁；超时终止进程组并等待退出，仍存活的查询会阻止该 VM 再次启动查询。启动前将退避状态写入仅 root 可读的 `/run/ithiltir-node/pve-guest`，该状态为易失数据，重启后重建。热采集只读此缓存。
+helper 在内存中保存每台 VM 的观测结果。8 个 worker 按顺序选择到期 VM，同一 VM 不重叠查询，采样间隔至少 3 秒；单次观测超时 2 秒，完成一台即可读取一台，不等待其他 VM，也没有整轮硬截止。只有 QMP 状态为 `running` 才采集动态指标和 IP；其他 VM 保留配置与状态，模板排除。CPU 使用进程计数差值、VM vCPU 配额及宿主 CPU 数计算，不受 helper CPU 亲和性影响；内存保持 PVE cgroup/balloon 口径，磁盘和 tap 网卡字节数为累计计数。配置每 3 秒刷新，磁盘容量每 60 秒单独查询 PVE，超过 2 分钟后省略。Node 按现有 3 秒 VM 上报节奏从 helper Unix socket 读取当前快照。 PVE RRD 历史仍通过 helper 按需查询，不包含 LXC 和 VM 控制。
+
+Guest Agent IP 通过可选 `ips` 数组返回，每台 VM 最多 1024 个不重复的 IPv4/IPv6 地址，包含私网地址，排除回环、链路本地、未指定、多播及非法地址。IP 通过本机 QGA socket 独立采集，只查询 QMP 状态明确为 `running` 且启用了 Guest Agent 的 VM。调度器每 3 秒检查到期任务，最多 8 路并发，每台 VM 总超时 3 秒，每轮预算 10 秒，轮次不重叠。成功后间隔 60 秒再查，失败按 1、2、5 分钟退避；健康刷新优先，失败重试最多占用 2 个槽位。这些间隔是最小等待时间，负载饱和时查询可能推迟。VM 重启或 agent 配置变化会清除该 VM 的旧 IP 和冷却状态。采集锁防止 IP 轮次重叠；仅 root 可读的 `/run/ithiltir-node/pve-guest` 状态可跨 helper 重启保留，宿主重启后重建。基础采集只读 IP 缓存，不等待 QGA。
 
 ## 构建
 
@@ -128,6 +130,8 @@ build/
   linux/
     node_linux_amd64
     node_linux_arm64
+    pve_cache_linux_amd64
+    pve_cache_linux_arm64
   macos/
     node_macos_arm64
   windows/
@@ -171,4 +175,4 @@ Ithiltir-node 使用 GNU Affero General Public License v3.0 only 授权。详见
 
 ## Node gRPC 传输
 
-为兼容已有安装，默认仍使用 HTTP。在 Node 服务环境中设置 `ITHILTIR_NODE_TRANSPORT=grpc`（仅 RPC）或 `auto`（发送报告前协商），再重启 Node。Dash 在现有 HTTP/2 监听地址提供 gRPC；代理必须以 gRPC 转发 `/ithiltir.node.v1.Node/`。这两种模式不会因鉴权或 TLS 失败降级到明文。PVE 历史还要求 root helper 常驻服务（`pve-cache --serve`）。浏览器 API 和资产下载继续使用 HTTP。
+为兼容已有安装，默认仍使用 HTTP。在 Node 服务环境中设置 `ITHILTIR_NODE_TRANSPORT=grpc`（仅 RPC）或 `auto`（发送报告前协商），再重启 Node。Dash 在现有 HTTP/2 监听地址提供 gRPC；代理必须以 gRPC 转发 `/ithiltir.node.v1.Node/`。这两种模式不会因鉴权或 TLS 失败降级到明文。PVE 历史还要求 root helper 常驻服务（`pve-cache`）。浏览器 API 和资产下载继续使用 HTTP。

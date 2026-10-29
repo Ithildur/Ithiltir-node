@@ -24,6 +24,7 @@
 | Push 目标 | `/api/node/metrics` | `POST` | `NodeReport` | `200` | 需要 `X-Node-Secret`。 |
 | Push 目标 | `/api/node/static` | `POST` | `Static` | `200` | 需要 `X-Node-Secret`。由 `/metrics` target URL 推导。 |
 | Push 目标 | `/api/node/identity` | `POST` | `{}` | `200` | 需要 `X-Node-Secret`。返回 `{ "install_id": "...", "created": true/false }`。 |
+| Push 目标 | `/api/node/virt` | `POST` | VM 快照 | `204` | 需要 `X-Node-Secret` 和已配置的 PVE helper socket，不下发更新 manifest。 |
 | Push debug 本地 | `/` | `GET` | `NodeReport` | `200` | 仅 `push --debug` 启用；绑定到 `127.0.0.1:${NODE_PORT:-9101}`。优先返回最近一次成功上报的结果，否则返回当前快照。 |
 
 本地 `GET` 路由也接受 `HEAD`。其他方法返回 `405`，并带 `Allow: GET, HEAD`。
@@ -34,7 +35,7 @@
 - 时间戳为 UTC RFC3339。
 - 字节和包计数是原始数字计数器。
 - `*Ratio` 字段范围是 `0..1`，不是百分比。
-- 数组返回 `[]`，不是 `null`。
+- 宿主报告的数组返回 `[]`，不是 `null`。VM 报告在没有已知成功清单时使用 `vms: null`；`vms: []` 表示成功枚举且为空。
 - 没有值的可选字段会省略。
 - 运行时磁盘结构和静态磁盘结构不是一回事，别混用；见 [api_disk_CN.md](api_disk_CN.md)。
 
@@ -58,12 +59,12 @@ target URL 规则：
 传输规则：
 
 - `http` 和 `https` target URL 都是合法配置。
-- HTTPS target 可按客户端回落规则降级到 HTTP。
+- `http` 传输模式下，HTTPS target 可按客户端回落规则降级到 HTTP；`grpc` 和 `auto` 不允许 TLS 到明文的降级。
 - `--require-https` 会拒绝非 HTTPS target，并禁止 HTTP 回落。
 
 响应处理：
 
-- `200 OK` 是 Push 目标请求的唯一成功响应。target 是否成功只看 HTTP 状态；响应 body 只影响更新暂存。
+- 宿主指标、静态信息和身份 HTTP 请求要求 `200 OK`；VM 上报 `/api/node/virt` 要求 `204 No Content`。指标响应 body 只影响更新暂存。
 - `/api/node/metrics` 可以返回非 JSON 内容、空 body，或 JSON。只有 `Content-Type` 为 `application/json` 时才解析 update manifest；允许 `charset=utf-8` 这类 media type 参数。
 - JSON 响应可包含可选的 `update` manifest：
 
@@ -87,7 +88,7 @@ target URL 规则：
 - `version` 与 node 当前上报版本相同的 manifest 会先被忽略，不参与冲突判断。如果同一轮里多个剩余 target 返回 update manifest，所有 manifest 的 `id`、`version`、`url`、`sha256` 和 `size` 必须一致；有冲突则跳过更新。
 - Windows 成功暂存更新后，`node push` 会干净退出。Windows runner 校验暂存文件，替换 `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`，然后重启 node。Linux 和 macOS 切换 `/var/lib/ithiltir-node/current` 到下载后的 release，然后用相同参数和环境 exec 更新后的 node。
 - JSON 格式错误、manifest 非法、下载失败、大小不匹配或校验和不匹配时，跳过更新并继续上报。
-- 任何非 `200` 响应都会让该 target 在当前轮失败。
+- 宿主指标请求的非 `200` 响应会让该 target 在当前轮失败；VM 上报使用独立的成功判定和重试规则。
 - `/api/node/identity` 必须返回带 `install_id` 的 JSON；`created` 只是行为元数据。
 
 ## 上报配置
@@ -209,17 +210,23 @@ targets:
 
 ## 虚拟机快照
 
-为 `node push` 设置 `ITHILTIR_NODE_VIRT_CACHE` 后启用独立 VM 推送。每个以 `/metrics` 结尾的上报目标派生同级 `/virt`，使用同一 `X-Node-Secret` 发送 POST；宿主报告不增加 VM 字段。任务仅发送新快照，失败时有界退避并保留最新样本，不积累队列。该路径不跟随 HTTP 重定向，遵守 `--require-https`。
+为 `node push` 设置 `ITHILTIR_NODE_PVE_SOCKET` 后启用独立 VM 推送。每个以 `/metrics` 结尾的上报目标派生同级 `/virt`，使用同一 `X-Node-Secret` 发送 POST；宿主报告不增加 VM 字段。任务仅发送新快照，失败时有界退避并保留最新样本，不积累队列。该路径不跟随 HTTP 重定向，遵守 `--require-https`。
 
-版本 1 缓存就是上报体：`schema: 1`、`provider: "pve"`、`host`、`collected_at`、可选 `last_success_at`、`ttl_seconds: 90`、`status`（`ok` 或 `error`）、可选 `error`、`vms`。成功样本必须是数组，`[]` 表示成功枚举且没有 VM；失败可保留上次成功的列表和时间。缓存缺失或非法时上报错误，不刷新旧样本时间。Dash 在读取时计算数据是否过期。
+helper 在内存中保存每台 VM 的观测结果。8 个 worker 按顺序选择到期 VM，同一 VM 不重叠查询，采样间隔至少 3 秒；单次观测超时 2 秒，完成一台即可读取一台，不等待其他 VM，也没有整轮硬截止。只有 QMP 状态为 `running` 才采集动态指标和 IP；其他 VM 保留配置与状态，模板排除。CPU 使用进程计数差值、VM vCPU 配额及宿主 CPU 数计算，不受 helper CPU 亲和性影响；内存保持 PVE cgroup/balloon 口径，磁盘和 tap 网卡字节数为累计计数。配置每 3 秒刷新，磁盘容量每 60 秒单独查询 PVE，超过 2 分钟后省略。Node 按现有 3 秒 VM 上报节奏从 helper Unix socket 读取当前快照。 PVE RRD 历史仍通过 helper 按需查询，不包含 LXC 和 VM 控制。
 
-VM 包含 `id`、`name`、`status`、`template`；可选字段为 `qmp_status`、`cpus`、`cpu_ratio`、`memory_bytes`、`memory_limit_bytes`、`disk_capacity_bytes`、`disk_read_bytes`、`disk_write_bytes`、`net_in_bytes`、`net_out_bytes`、`uptime_seconds`、`ips`。缺失表示未知。CPU 沿用 PVE 资源统计中相对于 VM CPU 配额的比例；内存沿用 PVE `mem`；磁盘容量沿用 `maxdisk`；磁盘和网络字节数为累计计数。只上报本机 QEMU VM，包括关机 VM 和模板。
+helper 的版本 1 快照就是上报体：`schema: 1`、`provider: "pve"`、`host`、`collected_at`、可选 `last_success_at`、`ttl_seconds: 90`、`status`（`ok` 或 `error`）、可选 `error`、`vms`。成功样本必须是数组，`[]` 表示成功枚举且没有 VM；失败可保留上次成功的列表和时间。helper 不可用时上报错误，不刷新旧观测时间。Dash 在读取时计算数据是否过期。
 
-Guest Agent IP 通过可选 `ips` 数组返回，每台 VM 最多 128 个不重复的 IPv4/IPv6 地址，包含私网地址，排除回环、链路本地、未指定、多播及非法地址。需要在 PVE 启用 Guest Agent，并在来宾内运行代理。IP 缺失不使基础采集失败。 IP 由 `pve-cache --serve` 内的独立慢任务采集（手动单次采集使用 `--guest`）：调度器在任务结束 60 秒后唤醒，成功的 VM 间隔 5 分钟再查，失败按 5、10、20、30 分钟退避（上限 30 分钟）。只查询新鲜清单中运行、非模板、未暂停的 VM。最多四路并发，单次查询超时 5 秒，慢任务总预算 50 秒。每台 VM 使用由查询进程继承的文件锁；超时终止进程组并等待退出，仍存活的查询会阻止该 VM 再次启动查询。启动前将退避状态写入仅 root 可读的 `/run/ithiltir-node/pve-guest`，该状态为易失数据，重启后重建。热采集只读此缓存。
+VM 包含 `id`、`name`、`status`、`template`；可选字段为 `qmp_status`、`cpus`、`cpu_ratio`、`memory_bytes`、`memory_limit_bytes`、`disk_capacity_bytes`、`disk_read_bytes`、`disk_write_bytes`、`net_in_bytes`、`net_out_bytes`、`net_rate_limits_mbps`、`uptime_seconds`、`ips`。缺失表示未知。CPU 为按 vCPU 数归一化的进程计数差值；内存保持 PVE cgroup/balloon 口径；磁盘容量沿用低频查询的 `maxdisk`；磁盘和网络字节数为累计计数。只上报本机 QEMU VM，包括关机 VM，排除模板。
 
-可选字段 `ips_collected_at`、`ips_ttl_seconds` 独立描述 IP 样本新鲜度。helper 使用 900 秒 IP TTL；复用时保留原采样时间，省略过期样本以及已知早于 VM 本次启动的样本。成功查询无地址时可以只有新鲜度字段而没有 `ips`。查询失败仅在原 IP 样本未过期时继续使用；读取方必须单独判断 IP 新鲜度，不能只看快照 `stale`。兼容不带这两个字段的报告，此时 IP 新鲜度未知；提供时，时间必须非零且不晚于 `collected_at`，TTL 为 1–3600。
+每台 VM 使用独立的可选 `collected_at`、`ttl_seconds`（helper 使用 90 秒）记录实际观测时间，而非外层快照组装时间。缺少观测时间表示动态指标未知。helper 和 Dash 对过期 VM 省略 CPU、内存用量、磁盘/网络计数和运行时长，将状态标为 `unknown`，同时保留原观测时间及配置信息；IP 新鲜度仍独立判断。
 
-限制：4 MiB、4096 个不重复的 VM ID、255 字节名称/宿主名、64 字节状态、1024 字节错误、非负有符号 64 位计数器，以及 1–3600 秒 TTL。成功时采样时间等于最近成功时间，超前 Dash 超过 5 分钟的报告会被拒绝。Dash 对接收、重复及较旧样本返回 `204`，只有较新样本更新当前态；错误为 `400 invalid_virt`、`401 unauthorized`、`413 body_too_large`、`503 virt_unavailable`。该接口不下发更新、不刷新宿主在线率。旧 Dash 可以不支持该接口，失败不影响宿主上报。
+可选 `net_rate_limits_mbps` 按网卡名（如 `net0`）上报 PVE 配置限速，值为 JSON 数字，单位 Mbps（1 Mbps = 1,000,000 bit/s），四舍五入至两位小数；JSON 数字不补尾随零。PVE `rate` 按 MiB/s 换算，例如 `12.5` 上报 `104.86`。同一值分别适用于收、发方向，不是 VM 所有网卡共享的总额度。`0` 表示该网卡未配置限速；字段缺失表示未采集到网卡配置。helper 每轮直接读取本机 `/etc/pve/qemu-server/<vmid>.conf` 的当前配置，忽略待应用修改和快照段；限速值解析失败时省略该字段并记录日志，基础指标继续上报。
+
+Guest Agent IP 通过可选 `ips` 数组返回，每台 VM 最多 1024 个不重复的 IPv4/IPv6 地址，包含私网地址，排除回环、链路本地、未指定、多播及非法地址。IP 通过本机 QGA socket 独立采集，只查询 QMP 状态明确为 `running` 且启用了 Guest Agent 的 VM。调度器每 3 秒检查到期任务，最多 8 路并发，每台 VM 总超时 3 秒，每轮预算 10 秒，轮次不重叠。成功后间隔 60 秒再查，失败按 1、2、5 分钟退避；健康刷新优先，失败重试最多占用 2 个槽位。这些间隔是最小等待时间，负载饱和时查询可能推迟。VM 重启或 agent 配置变化会清除该 VM 的旧 IP 和冷却状态。采集锁防止 IP 轮次重叠；仅 root 可读的 `/run/ithiltir-node/pve-guest` 状态可跨 helper 重启保留，宿主重启后重建。基础采集只读 IP 缓存，不等待 QGA。
+
+可选字段 `ips_collected_at`、`ips_ttl_seconds` 独立描述 IP 样本新鲜度。helper 使用 900 秒 IP TTL；复用时保留原采样时间，省略过期样本以及已知早于 VM 本次启动的样本。成功查询无地址时可以只有新鲜度字段而没有 `ips`。查询失败仅在原 IP 样本未过期时继续使用；读取方必须单独判断 IP 新鲜度，不能只看快照 `stale`。兼容不带这两个字段的报告，此时 IP 新鲜度未知；提供时，IP 时间必须非零且不晚于外层快照的 `collected_at`，TTL 为 1–3600。IP 时间可以晚于该 VM 的 `collected_at`。
+
+限制：4 MiB、4096 个不重复的 VM ID、255 字节名称/宿主名、64 字节状态、1024 字节错误、非负有符号 64 位计数器，以及 1–3600 秒 TTL。成功时 `last_success_at` 为最近一次成功读取 VM 清单的时间，可早于快照组装时间 `collected_at`；超前 Dash 超过 5 分钟的报告会被拒绝。Dash 对接收、重复及较旧样本返回 `204`，只有较新样本更新当前态；错误为 `400 invalid_virt`、`401 unauthorized`、`413 body_too_large`、`503 virt_unavailable`。该接口不下发更新、不刷新宿主在线率。旧 Dash 可以不支持该接口，失败不影响宿主上报。
 
 
 ## Node gRPC 传输

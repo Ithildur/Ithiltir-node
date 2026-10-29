@@ -26,32 +26,24 @@ type historyCall struct {
 }
 
 type historyCache struct {
-	ctx               context.Context
-	host, output, dir string
-	slots             chan struct{}
-	mu                sync.Mutex
-	calls             map[virt.HistoryQuery]*historyCall
-	failures          map[int]time.Time
-	active, bytes     int
-	wg                sync.WaitGroup
-	lookup            func(context.Context, string, virt.HistoryQuery, *os.File) ([]byte, error)
+	ctx           context.Context
+	host, dir     string
+	collector     *collector
+	slots         chan struct{}
+	mu            sync.Mutex
+	calls         map[virt.HistoryQuery]*historyCall
+	failures      map[int]time.Time
+	active, bytes int
+	wg            sync.WaitGroup
+	lookup        func(context.Context, string, virt.HistoryQuery, *os.File) ([]byte, error)
 }
 
-func newHistoryCache(ctx context.Context, host, output, dir string) *historyCache {
-	return &historyCache{ctx: ctx, host: host, output: output, dir: dir, slots: make(chan struct{}, 4), calls: make(map[virt.HistoryQuery]*historyCall), failures: make(map[int]time.Time), lookup: history}
+func newHistoryCache(ctx context.Context, host, dir string, metrics *collector) *historyCache {
+	return &historyCache{ctx: ctx, host: host, dir: dir, collector: metrics, slots: make(chan struct{}, 4), calls: make(map[virt.HistoryQuery]*historyCall), failures: make(map[int]time.Time), lookup: history}
 }
 
 func (h *historyCache) inventory(q virt.HistoryQuery) error {
-	snapshot, err := virt.Read(h.output)
-	if err != nil || snapshot.Host != h.host || snapshot.Status != "ok" || time.Since(snapshot.CollectedAt) < 0 || time.Since(snapshot.CollectedAt) > time.Duration(snapshot.TTLSeconds)*time.Second {
-		return virt.ErrSource
-	}
-	for _, vm := range snapshot.VMs {
-		if vm.ID == q.VMID {
-			return nil
-		}
-	}
-	return virt.ErrVMNotFound
+	return h.collector.contains(q.VMID)
 }
 
 func (h *historyCache) get(ctx context.Context, q virt.HistoryQuery) ([]byte, error) {
@@ -156,7 +148,7 @@ func (h *historyCache) execute(ctx context.Context, q virt.HistoryQuery) ([]byte
 	if err := h.inventory(q); err != nil {
 		return nil, err
 	}
-	lock, err := guestLock(filepath.Join(h.dir, strconv.Itoa(q.VMID)+".lock"))
+	lock, err := guestLock(filepath.Join(h.dir, "history-"+strconv.Itoa(q.VMID)+".lock"))
 	if err != nil {
 		return nil, err
 	}
@@ -180,16 +172,6 @@ func (h *historyCache) execute(ctx context.Context, q virt.HistoryQuery) ([]byte
 		h.mu.Unlock()
 	}
 	return raw, err
-}
-
-func (h *historyCache) guest(ctx context.Context, host string, id int, lock *os.File) ([]string, error) {
-	select {
-	case h.slots <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	defer func() { <-h.slots }()
-	return guestIPs(ctx, host, id, lock)
 }
 
 func history(ctx context.Context, host string, q virt.HistoryQuery, lock *os.File) ([]byte, error) {

@@ -36,7 +36,7 @@ func NewClient(path string) *Client {
 		},
 		MaxConnsPerHost: 4, MaxIdleConnsPerHost: 4, IdleConnTimeout: time.Minute,
 	}
-	// Capability checks must not queue behind all four history queries.
+	// Snapshot reads and capability checks must not queue behind history queries.
 	probe := transport.Clone()
 	probe.MaxConnsPerHost, probe.MaxIdleConnsPerHost = 1, 1
 	return &Client{
@@ -51,7 +51,7 @@ func (c *Client) Close() {
 func (c *Client) Capabilities(ctx context.Context) (Capabilities, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	raw, err := call(ctx, c.probe, "GET", "/capabilities", nil)
+	raw, err := call(ctx, c.probe, "GET", "/capabilities", nil, HistoryMaxBytes)
 	if err != nil {
 		return Capabilities{}, err
 	}
@@ -67,9 +67,24 @@ func (c *Client) History(ctx context.Context, q HistoryQuery) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return call(ctx, c.history, "POST", "/history", body)
+	return call(ctx, c.history, "POST", "/history", body, HistoryMaxBytes)
 }
-func call(ctx context.Context, client *http.Client, method, path string, body []byte) ([]byte, error) {
+
+func (c *Client) Snapshot(ctx context.Context) (Snapshot, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	raw, err := call(ctx, c.probe, "GET", "/snapshot", nil, MaxBytes)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	var snapshot Snapshot
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return Snapshot{}, err
+	}
+	return snapshot, snapshot.Validate()
+}
+
+func call(ctx context.Context, client *http.Client, method, path string, body []byte, limit int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, method, "http://pve"+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -93,11 +108,11 @@ func call(ctx context.Context, client *http.Client, method, path string, body []
 	default:
 		return nil, ErrSource
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, HistoryMaxBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) > HistoryMaxBytes {
+	if int64(len(raw)) > limit {
 		return nil, fmt.Errorf("PVE response exceeds limit")
 	}
 	return raw, nil

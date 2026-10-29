@@ -19,16 +19,10 @@ import (
 func testHistoryCache(t *testing.T) *historyCache {
 	t.Helper()
 	dir := t.TempDir()
-	inventory := guestInventory()
-	raw, err := json.Marshal(inventory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	output := filepath.Join(dir, "virt.json")
-	if err := os.WriteFile(output, raw, 0600); err != nil {
-		t.Fatal(err)
-	}
-	return newHistoryCache(t.Context(), "pve", output, dir)
+	metrics := newCollector()
+	metrics.entries[101] = &observation{vm: guestInventory().VMs[0]}
+	metrics.order, metrics.inventoryAt = []int{101}, time.Now().UTC()
+	return newHistoryCache(t.Context(), "pve", dir, metrics)
 }
 
 func TestHistoryCoalescesAndKeepsOtherWaiters(t *testing.T) {
@@ -121,7 +115,7 @@ func TestHistoryCancellationKeepsVMLockUntilQueryReturns(t *testing.T) {
 	if _, err := h.get(t.Context(), other); !errors.Is(err, virt.ErrBusy) {
 		t.Fatalf("overlapping VM query: %v", err)
 	}
-	lock, err := guestLock(filepath.Join(h.dir, "101.lock"))
+	lock, err := guestLock(filepath.Join(h.dir, "history-101.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +128,7 @@ func TestHistoryCancellationKeepsVMLockUntilQueryReturns(t *testing.T) {
 	}
 	once.Do(func() { close(release) })
 	h.wg.Wait()
-	lock, err = guestLock(filepath.Join(h.dir, "101.lock"))
+	lock, err = guestLock(filepath.Join(h.dir, "history-101.lock"))
 	if err != nil || lock == nil {
 		t.Fatal("query did not release lock", err)
 	}

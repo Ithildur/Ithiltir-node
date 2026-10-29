@@ -24,6 +24,7 @@ The `/api/node/*` endpoints are dashboard endpoints. Ithiltir-node calls them in
 | Push target | `/api/node/metrics` | `POST` | `NodeReport` | `200` | Requires `X-Node-Secret`. |
 | Push target | `/api/node/static` | `POST` | `Static` | `200` | Requires `X-Node-Secret`. Derived from a `/metrics` target URL. |
 | Push target | `/api/node/identity` | `POST` | `{}` | `200` | Requires `X-Node-Secret`. Returns `{ "install_id": "...", "created": true/false }`. |
+| Push target | `/api/node/virt` | `POST` | VM snapshot | `204` | Requires `X-Node-Secret` and a configured PVE helper socket. No update manifest. |
 | Push debug local | `/` | `GET` | `NodeReport` | `200` | Only enabled with `push --debug`; bound to `127.0.0.1:${NODE_PORT:-9101}`. Returns the last successfully pushed report when available, otherwise the current snapshot. |
 
 Local `GET` routes also accept `HEAD`. Other methods return `405` with `Allow: GET, HEAD`.
@@ -34,7 +35,7 @@ Local `GET` routes also accept `HEAD`. Other methods return `405` with `Allow: G
 - Timestamps are UTC RFC3339.
 - Byte and packet counters are raw numeric counters.
 - `*Ratio` fields are `0..1`, not percentages.
-- Arrays are returned as `[]`, not `null`.
+- Host-report arrays are returned as `[]`, not `null`. VM reports use `vms: null` when no successful inventory is known; `vms: []` means a successful empty inventory.
 - Optional fields with no value are omitted.
 - Runtime disk and static disk are different payloads. Do not mix them; see [api_disk.md](api_disk.md).
 
@@ -58,12 +59,12 @@ Target URL rules:
 Transport rules:
 
 - `http` and `https` target URLs are valid.
-- HTTPS targets can fall back to HTTP under the client fallback rules.
+- In `http` transport mode, HTTPS targets can fall back to HTTP under the client fallback rules. `grpc` and `auto` never authorize TLS-to-plaintext fallback.
 - `--require-https` rejects non-HTTPS targets and disables HTTP fallback.
 
 Response handling:
 
-- `200 OK` is the only successful response for push target requests. The HTTP status decides target success; response body parsing only controls update staging.
+- Host metrics, static data, and identity HTTP requests require `200 OK`; VM reporting to `/api/node/virt` requires `204 No Content`. Metrics response body parsing only controls update staging.
 - `/api/node/metrics` may return non-JSON content, an empty body, or JSON. Update manifests are parsed only when `Content-Type` is `application/json`; media type parameters such as `charset=utf-8` are accepted.
 - JSON responses may include an optional `update` manifest:
 
@@ -87,7 +88,7 @@ Response handling:
 - Manifests whose `version` matches the node's current reported version are ignored before conflict checks. If multiple remaining targets return update manifests in the same round, all returned manifests must match by `id`, `version`, `url`, `sha256`, and `size`; conflicting manifests are skipped.
 - A staged Windows update makes `node push` exit cleanly. The Windows runner verifies the staged file, replaces `%ProgramData%\Ithiltir-node\bin\ithiltir-node.exe`, and restarts the node. Linux and macOS switch `/var/lib/ithiltir-node/current` to the downloaded release, then exec the updated node with the same args and environment.
 - Invalid JSON, invalid manifests, download failures, size mismatches, and checksum mismatches skip the update and keep reporting.
-- Any non-`200` response fails that target for the current round.
+- Any non-`200` host metrics response fails that target for the current round. VM delivery uses its independent success and retry rules.
 - `/api/node/identity` must return JSON with `install_id`; `created` is optional behavior metadata.
 
 ## Report Config
@@ -209,17 +210,23 @@ Static push behavior:
 
 ## Virtual machine snapshots
 
-Set `ITHILTIR_NODE_VIRT_CACHE` for `node push` to enable independent VM delivery. Each configured target ending in `/metrics` also receives `POST` to the sibling `/virt`, using the same `X-Node-Secret`. No VM fields are added to the host report. The task sends new snapshots, retries failures with bounded backoff, and retains only the latest sample. It does not follow HTTP redirects. `--require-https` applies to this path too.
+Set `ITHILTIR_NODE_PVE_SOCKET` for `node push` to enable independent VM delivery. Each configured target ending in `/metrics` also receives `POST` to the sibling `/virt`, using the same `X-Node-Secret`. No VM fields are added to the host report. The task sends new snapshots, retries failures with bounded backoff, and retains only the latest sample. It does not follow HTTP redirects. `--require-https` applies to this path too.
 
-The version 1 cache is the report body: `schema: 1`, `provider: "pve"`, `host`, `collected_at`, optional `last_success_at`, `ttl_seconds: 90`, `status` (`ok` or `error`), optional `error`, and `vms`. Successful samples require an array, including `[]` for an empty inventory. Failures preserve the previous successful inventory/time when available. Missing or invalid cache files generate an error report; old cache timestamps are never refreshed. Dash computes staleness at read time.
+The helper keeps per-VM observations in memory. Eight workers rotate through due VMs; each VM is sampled at most once per three seconds, with no overlapping query for the same VM. Each observation has a two-second deadline, and a completed VM becomes readable immediately without waiting for other VMs or a whole-round deadline. Only QMP status `running` permits dynamic metrics and IPs; other VMs retain configuration and state, and templates are excluded. CPU uses process-counter deltas normalized to vCPUs and the host CPU count, independently of helper CPU affinity. Memory follows PVE cgroup/balloon semantics; disk and tap-network bytes are cumulative counters. Configuration is refreshed every three seconds. Disk capacity uses a separate PVE query every 60 seconds and expires after two minutes. Node reads the current snapshot from the helper Unix socket on its existing three-second VM delivery cadence. Unavailable metrics remain absent. PVE RRD history remains available through the helper; LXC and VM control are not included.
 
-Each VM contains `id`, `name`, `status`, `template`; optional fields are `qmp_status`, `cpus`, `cpu_ratio`, `memory_bytes`, `memory_limit_bytes`, `disk_capacity_bytes`, `disk_read_bytes`, `disk_write_bytes`, `net_in_bytes`, `net_out_bytes`, `uptime_seconds`, `ips`. Missing metrics mean unknown. CPU follows PVE resource statistics, normalized to the VM CPU allocation; memory follows PVE `mem`; disk capacity follows `maxdisk`; network and disk bytes are cumulative counters. Only local QEMU VMs are included, including stopped VMs and templates.
+The helper's version 1 snapshot is the report body: `schema: 1`, `provider: "pve"`, `host`, `collected_at`, optional `last_success_at`, `ttl_seconds: 90`, `status` (`ok` or `error`), optional `error`, and `vms`. Successful samples require an array, including `[]` for an empty inventory. Failures preserve the previous successful inventory/time when available. An unavailable helper generates an error report; previous observation timestamps are preserved. Dash computes staleness at read time.
 
-Guest Agent IPs are returned in optional `ips` arrays, up to 128 unique IPv4/IPv6 addresses per VM, including private addresses and excluding loopback, link-local, unspecified, multicast and invalid addresses. PVE must enable the guest agent and the agent must be running inside the VM. Missing IPs do not fail basic collection. IP collection runs independently inside `pve-cache --serve` (manual one-shot: `--guest`): the scheduler wakes 60 seconds after completion, successful VMs wait five minutes, and failures back off for 5, 10, 20, then 30 minutes (maximum). Only running, non-template, non-paused VMs from a fresh inventory are queried. Four workers use five-second query deadlines within a 50-second slow-collection budget. Per-VM file locks are inherited by query processes; timeout kills the process group and waits for exit. A still-running query blocks any replacement for that VM. Cooldowns are saved before launch in root-only `/run/ithiltir-node/pve-guest`; this state is volatile and resets on reboot. Hot collection only reads this cache.
+Each VM contains `id`, `name`, `status`, `template`; optional fields are `qmp_status`, `cpus`, `cpu_ratio`, `memory_bytes`, `memory_limit_bytes`, `disk_capacity_bytes`, `disk_read_bytes`, `disk_write_bytes`, `net_in_bytes`, `net_out_bytes`, `net_rate_limits_mbps`, `uptime_seconds`, `ips`. Missing metrics mean unknown. CPU uses consecutive `/proc` process counters normalized by elapsed time and the VM vCPU count; the first sample is unknown. Memory uses cgroup usage minus file cache, overridden by balloon total minus free memory when available; disk capacity follows low-frequency PVE `maxdisk`; network and disk bytes are cumulative counters. Only local QEMU VMs are included, including stopped VMs but excluding templates. Dynamic metrics and IPs require QMP status `running`.
 
-Optional `ips_collected_at` and `ips_ttl_seconds` describe the IP sample independently of hot metrics. The helper emits a 900-second IP TTL, preserves the original timestamp on reuse, and omits expired samples and samples known to predate the VM's current boot. An empty successful query may have freshness metadata without `ips`. On query failure, the previous IP sample remains usable only until its own expiry. Clients must check IP freshness separately from snapshot `stale`. Reports without these fields remain accepted, with unknown IP freshness; when provided, the timestamp must be nonzero and no later than `collected_at`, and TTL must be 1–3600.
+Each VM independently carries optional `collected_at` and `ttl_seconds` (the helper uses 90 seconds). These describe the VM observation, not the time the enclosing snapshot was assembled. Missing observation metadata means live metrics are unknown. The helper and Dash omit expired CPU, memory usage, disk/network counters and uptime and expose the VM state as `unknown`, while retaining its original observation timestamp and configuration. IP freshness remains independent.
 
-Limits are 4 MiB, 4096 unique VM IDs, 255-byte names/host, 64-byte states, 1024-byte errors, nonnegative signed 64-bit counters and TTL 1–3600 seconds. Successful reports have equal collection/success timestamps. Reports more than five minutes ahead of Dash are rejected. Dash returns `204` for accepted, duplicate or older samples; only newer samples replace current state. Error responses are `400 invalid_virt`, `401 unauthorized`, `413 body_too_large`, and `503 virt_unavailable`. This endpoint does not deliver updates or refresh host uptime. Older Dash versions may lack it; failures do not stop host reporting.
+Optional `net_rate_limits_mbps` maps NIC names (such as `net0`) to PVE-configured rate limits as JSON numbers in Mbps (1 Mbps = 1,000,000 bit/s), rounded to two decimal places; JSON numbers do not retain trailing zeros. PVE `rate` is converted from MiB/s: `12.5` becomes `104.86`. The same limit applies separately to receive and transmit traffic, not to all VM NICs combined. Zero means no configured limit on that NIC; an absent field means NIC configuration was not collected. Each helper collection reads the current section of local `/etc/pve/qemu-server/<vmid>.conf`, ignoring pending changes and saved snapshots. Invalid NIC rate values are logged and omit this field without stopping basic metrics reporting.
+
+Guest Agent IPs are returned in optional `ips` arrays, up to 1024 unique IPv4/IPv6 addresses per VM, including private addresses and excluding loopback, link-local, unspecified, multicast and invalid addresses. IP collection uses local QGA sockets independently of basic metrics. Only VMs with QMP status `running` and an enabled guest agent are queried. The scheduler checks due work every three seconds, with eight concurrent queries and a three-second total deadline per VM; each round has a ten-second budget and rounds never overlap. Successful queries are eligible again after 60 seconds; failures back off for 1, 2, then 5 minutes. Healthy refreshes have priority, and retries occupy at most two slots. These intervals are minimum delays; saturation can defer a query. Boot or agent configuration changes reset the VM's cached IPs and cooldown. A collector lock prevents overlapping IP rounds. Root-only state in `/run/ithiltir-node/pve-guest` survives helper restarts but is rebuilt after host reboot. Basic collection reads the cached results without waiting for QGA.
+
+Optional `ips_collected_at` and `ips_ttl_seconds` describe the IP sample independently of hot metrics. The helper emits a 900-second IP TTL, preserves the original timestamp on reuse, and omits expired samples and samples known to predate the VM's current boot. An empty successful query may have freshness metadata without `ips`. On query failure, the previous IP sample remains usable only until its own expiry. Clients must check IP freshness separately from snapshot `stale`. Reports without these fields remain accepted, with unknown IP freshness; when provided, the timestamp must be nonzero and no later than the enclosing snapshot's `collected_at`, and TTL must be 1–3600. The IP timestamp may be later than the VM's own `collected_at`.
+
+Limits are 4 MiB, 4096 unique VM IDs, 255-byte names/host, 64-byte states, 1024-byte errors, nonnegative signed 64-bit counters and TTL 1–3600 seconds. Successful reports retain the latest successful inventory time in `last_success_at`; it can precede snapshot assembly time `collected_at`. Reports more than five minutes ahead of Dash are rejected. Dash returns `204` for accepted, duplicate or older samples; only newer samples replace current state. Error responses are `400 invalid_virt`, `401 unauthorized`, `413 body_too_large`, and `503 virt_unavailable`. This endpoint does not deliver updates or refresh host uptime. Older Dash versions may lack it; failures do not stop host reporting.
 
 
 ## Node gRPC transport

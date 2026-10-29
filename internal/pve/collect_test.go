@@ -3,46 +3,62 @@
 package pve
 
 import (
+	"maps"
 	"testing"
 	"time"
-
-	"Ithiltir-node/internal/virt"
 )
 
-func TestPVEObservationPreservesUnknownAndStoppedVMs(t *testing.T) {
-	vms, err := decode([]byte(`[{"vmid":102,"name":"template","status":"stopped","template":1,"maxmem":2147483648},{"vmid":101,"name":"guest","status":"running","qmpstatus":"paused","cpu":0,"cpus":2,"mem":0,"netin":0}]`))
+func TestPVEConfigAndCounterSemantics(t *testing.T) {
+	hostCPUs, err := hostCPUCount(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(vms) != 2 || vms[0].ID != 101 || vms[0].QMPStatus != "paused" || vms[0].CPU == nil || *vms[0].CPU != 0 || vms[1].CPU != nil || !vms[1].Template || vms[1].Status != "stopped" {
-		t.Fatalf("unexpected observations: %+v", vms)
-	}
-	now := time.Now().UTC()
-	snapshot := virt.Snapshot{Schema: 1, Provider: "pve", Host: "pve", CollectedAt: now, LastSuccessAt: &now, TTLSeconds: 90, Status: "ok", VMs: vms}
-	if err := snapshot.Validate(); err != nil {
+	config, err := parseConfig(101, "name: guest\ncores: 2\nmemory: current=2048\nagent: enabled=1,type=virtio\nnet0: virtio=AA:BB:CC:DD:EE:01,rate=12.5\nnet1: virtio=AA:BB:CC:DD:EE:02\nnet2: virtio=AA:BB:CC:DD:EE:03,rate=25\n[PENDING]\ncores: 8\nnet0: virtio=AA:BB:CC:DD:EE:01,rate=100\n[snapshot]\nnet3: virtio=AA:BB:CC:DD:EE:04,rate=50\n", hostCPUs)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := applyCPU(vms, []byte(`[{"vmid":101,"node":"other","type":"qemu","status":"running","cpu":0.9},{"vmid":101,"node":"pve","type":"qemu","status":"running","cpu":0.25},{"vmid":102,"node":"pve","type":"lxc","status":"running","cpu":0.8}]`), "pve"); err != nil {
-		t.Fatal(err)
+	vm := config.vm
+	if vm.ID != 101 || vm.Name != "guest" || *vm.CPUs != min(int64(2), hostCPUs) || *vm.MemoryLimit != 2<<30 || config.agent == "" || vm.CPU != nil || vm.Memory != nil {
+		t.Fatalf("config invented live observations or applied pending changes: %+v", config)
 	}
-	if vms[0].CPU == nil || *vms[0].CPU != 0.25 || vms[1].CPU != nil {
-		t.Fatalf("wrong CPU source: %+v", vms)
+	if !maps.Equal(vm.NetRateLimits, map[string]float64{"net0": 104.86, "net1": 0, "net2": 209.72}) {
+		t.Fatalf("current NIC rate limits: %v", vm.NetRateLimits)
 	}
-	if err := applyCPU(vms, []byte(`[]`), "pve"); err != nil {
-		t.Fatal(err)
+	template, err := parseConfig(102, "template: 1\nagent: enabled=0,type=virtio\n", hostCPUs)
+	if err != nil || !template.vm.Template || template.agent != "" {
+		t.Fatalf("template/disabled agent: %+v, %v", template, err)
 	}
-	if vms[0].CPU != nil {
-		t.Fatal("missing CPU observation became zero")
-	}
-	for _, raw := range []string{`null`, `{}`, `[`, `[{"vmid":1,"status":"running","mem":-1}]`, `[{"vmid":1,"status":"running"},{"vmid":1,"status":"stopped"}]`} {
-		vms, err := decode([]byte(raw))
-		snapshot.VMs = vms
-		if err == nil && snapshot.Validate() == nil {
-			t.Fatalf("accepted invalid PVE payload %s", raw)
+	for _, input := range []struct {
+		raw  string
+		cpus int64
+	}{
+		{"cores: 16\n", 8},
+		{"cores: 16\nvcpus: 4\n", 4},
+	} {
+		config, err := parseConfig(103, input.raw, 8)
+		if err != nil || *config.vm.CPUs != input.cpus {
+			t.Fatalf("VM CPU allocation: %+v, %v", config, err)
 		}
 	}
-	vms, err = decode([]byte(`[]`))
-	if err != nil || vms == nil || len(vms) != 0 {
-		t.Fatalf("empty list: %v, %v", vms, err)
+	if _, err := networkRateLimits("net0: virtio=AA:BB:CC:DD:EE:01,rate=-1\n"); err == nil {
+		t.Fatal("accepted negative NIC rate")
+	}
+
+	sample, err := parseProcess([]byte("123 (kvm (guest)) S 1 2 3 4 5 6 7 8 9 10 100 50 0 0 0 0 0 0 1000"))
+	if err != nil || sample.ticks != 150 || sample.start != 1000 {
+		t.Fatalf("process counters: %+v, %v", sample, err)
+	}
+	sample.pid, sample.at = 123, time.Now()
+	if cpuRatio(processSample{}, sample, 2) != nil {
+		t.Fatal("first CPU sample became zero")
+	}
+	next := sample
+	next.at, next.ticks = sample.at.Add(3*time.Second), sample.ticks+300
+	if ratio := cpuRatio(sample, next, 2); ratio == nil || *ratio != 0.5 {
+		t.Fatalf("CPU normalization: %v", ratio)
+	}
+	next.start++
+	if cpuRatio(sample, next, 2) != nil {
+		t.Fatal("CPU delta crossed a VM restart")
 	}
 }

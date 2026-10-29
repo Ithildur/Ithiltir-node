@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log"
 	"math/rand/v2"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +21,11 @@ func (a *agent) startSessions(ctx context.Context) *sync.WaitGroup {
 	wg := new(sync.WaitGroup)
 	for _, target := range a.targets {
 		wg.Go(func() {
-			helper := virt.NewClient(virt.SocketPath)
+			path := strings.TrimSpace(os.Getenv("ITHILTIR_NODE_PVE_SOCKET"))
+			if path == "" {
+				path = virt.SocketPath
+			}
+			helper := virt.NewClient(path)
 			defer helper.Close()
 			delay := time.Second
 			for ctx.Err() == nil {

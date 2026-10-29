@@ -4,6 +4,7 @@ package virt
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -22,6 +23,12 @@ func TestCapabilitiesRemainAvailableWhileHistoryConnectionsAreBusy(t *testing.T)
 	entered := make(chan struct{}, 4)
 	release := make(chan struct{})
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/snapshot" {
+			now := time.Now().UTC()
+			sampled := now.Add(-time.Minute)
+			_ = json.NewEncoder(w).Encode(Snapshot{Schema: 1, Provider: "pve", Host: "pve", CollectedAt: now, LastSuccessAt: &now, TTLSeconds: 90, Status: "ok", VMs: []VM{{ID: 100, Status: "running", CollectedAt: &sampled, TTLSeconds: 90, CPU: new(0.25)}}})
+			return
+		}
 		if r.URL.Path == "/capabilities" {
 			_, _ = w.Write([]byte(`{"version":"1.0.0","history":true}`))
 			return
@@ -59,6 +66,10 @@ func TestCapabilitiesRemainAvailableWhileHistoryConnectionsAreBusy(t *testing.T)
 	caps, err := client.Capabilities(ctx)
 	if err != nil || !caps.History || caps.Version != "1.0.0" {
 		t.Fatalf("capability probe blocked by history: %+v, %v", caps, err)
+	}
+	snapshot, err := client.Snapshot(ctx)
+	if err != nil || len(snapshot.VMs) != 1 || snapshot.VMs[0].CollectedAt == nil || !snapshot.VMs[0].CollectedAt.Before(snapshot.CollectedAt) {
+		t.Fatalf("snapshot blocked by history or refreshed VM timestamp: %+v, %v", snapshot, err)
 	}
 	close(release)
 	for range 4 {

@@ -22,7 +22,7 @@ import (
 
 type peerKey struct{}
 
-func Serve(ctx context.Context, host, output, socket, dir string, gid int, version string) error {
+func Serve(ctx context.Context, host, socket, dir string, gid int, version string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
@@ -57,8 +57,24 @@ func Serve(ctx context.Context, host, output, socket, dir string, gid int, versi
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cache := newHistoryCache(runCtx, host, output, dir)
+	metrics := newCollector()
+	cache := newHistoryCache(runCtx, host, dir, metrics)
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /snapshot", func(w http.ResponseWriter, r *http.Request) {
+		snapshot := metrics.snapshot(host, dir)
+		if err := snapshot.Validate(); err != nil {
+			log.Printf("PVE snapshot: %v", err)
+			http.Error(w, "invalid_snapshot", http.StatusServiceUnavailable)
+			return
+		}
+		raw, err := json.Marshal(snapshot)
+		if err != nil || len(raw) > virt.MaxBytes {
+			http.Error(w, "snapshot_too_large", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(raw)
+	})
 	mux.HandleFunc("GET /capabilities", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(virt.Capabilities{Version: version, History: true})
@@ -112,17 +128,20 @@ func Serve(ctx context.Context, host, output, socket, dir string, gid int, versi
 	}
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		repeat(runCtx, 0, 30*time.Second, func(ctx context.Context) error { return Refresh(ctx, host, output, dir, gid) })
+		repeat(runCtx, 0, sampleInterval, metrics.refreshInventory)
+	})
+	for range 8 {
+		wg.Go(func() { metrics.worker(runCtx) })
+	}
+	wg.Go(func() {
+		repeat(runCtx, 0, time.Minute, func(ctx context.Context) error { return metrics.metadata(ctx, host) })
 	})
 	wg.Go(func() {
-		repeat(runCtx, 45*time.Second, time.Minute, func(ctx context.Context) error {
-			ctx, cancel := context.WithTimeout(ctx, 50*time.Second)
+		repeat(runCtx, 3*time.Second, 3*time.Second, func(ctx context.Context) error {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			snapshot, err := virt.Read(output)
-			if err != nil {
-				return err
-			}
-			return collectGuests(ctx, dir, snapshot, cache.guest)
+			snapshot := metrics.snapshot(host, dir)
+			return CollectGuests(ctx, dir, snapshot)
 		})
 	})
 	errCh := make(chan error, 1)
@@ -175,9 +194,10 @@ func repeat(ctx context.Context, initial, interval time.Duration, run func(conte
 			return
 		case <-timer.C:
 		}
+		started := time.Now()
 		if err := run(ctx); err != nil && ctx.Err() == nil {
 			log.Print(fmt.Errorf("PVE cache: %w", err))
 		}
-		delay = interval
+		delay = max(0, interval-time.Since(started))
 	}
 }

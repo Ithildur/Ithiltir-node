@@ -21,7 +21,7 @@ import (
 // metrics loop. Each target keeps only its latest successful delivery marker.
 func startVirt(ctx context.Context, targets []*target) *sync.WaitGroup {
 	wg := new(sync.WaitGroup)
-	path := strings.TrimSpace(os.Getenv("ITHILTIR_NODE_VIRT_CACHE"))
+	path := strings.TrimSpace(os.Getenv("ITHILTIR_NODE_PVE_SOCKET"))
 	if path == "" {
 		return wg
 	}
@@ -36,17 +36,20 @@ func startVirt(ctx context.Context, targets []*target) *sync.WaitGroup {
 }
 
 func pushVirt(ctx context.Context, target *target, path string) {
+	helper := virt.NewClient(path)
+	defer helper.Close()
 	var sent time.Time
 	var snapshot virt.Snapshot
 	var readError string
-	delay := 5 * time.Second
+	delay := 3 * time.Second
 	limiter := logLimiter{cooldown: time.Minute}
 	for ctx.Err() == nil {
-		current, err := virt.Read(path)
+		started := time.Now()
+		current, err := helper.Snapshot(ctx)
 		if err == nil {
 			snapshot, readError = current, ""
 		} else {
-			message := virt.ErrorText(fmt.Errorf("cache unavailable: %w", err))
+			message := virt.ErrorText(fmt.Errorf("PVE helper unavailable: %w", err))
 			if readError != message {
 				readError = message
 				snapshot.Schema, snapshot.Provider, snapshot.TTLSeconds = 1, "pve", 90
@@ -63,10 +66,10 @@ func pushVirt(ctx context.Context, target *target, path string) {
 				limiter.logf("virt push target=%d: %v", target.id, err)
 				delay = min(delay*2, time.Minute)
 			} else {
-				sent, delay = snapshot.CollectedAt, 5*time.Second
+				sent, delay = snapshot.CollectedAt, 3*time.Second
 			}
 		}
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(max(0, delay-time.Since(started)))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
