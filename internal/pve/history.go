@@ -42,12 +42,8 @@ func newHistoryCache(ctx context.Context, host, dir string, metrics *collector) 
 	return &historyCache{ctx: ctx, host: host, dir: dir, collector: metrics, slots: make(chan struct{}, 4), calls: make(map[virt.HistoryQuery]*historyCall), failures: make(map[int]time.Time), lookup: history}
 }
 
-func (h *historyCache) inventory(q virt.HistoryQuery) error {
-	return h.collector.contains(q.VMID)
-}
-
 func (h *historyCache) get(ctx context.Context, q virt.HistoryQuery) ([]byte, error) {
-	if err := h.inventory(q); err != nil {
+	if err := h.collector.contains(q.VMID); err != nil {
 		return nil, err
 	}
 	h.mu.Lock()
@@ -145,10 +141,10 @@ func (h *historyCache) execute(ctx context.Context, q virt.HistoryQuery) ([]byte
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := h.inventory(q); err != nil {
+	if err := h.collector.contains(q.VMID); err != nil {
 		return nil, err
 	}
-	lock, err := guestLock(filepath.Join(h.dir, "history-"+strconv.Itoa(q.VMID)+".lock"))
+	lock, err := lockFile(filepath.Join(h.dir, "history-"+strconv.Itoa(q.VMID)+".lock"))
 	if err != nil {
 		return nil, err
 	}

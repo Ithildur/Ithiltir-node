@@ -26,7 +26,7 @@ func Serve(ctx context.Context, host, socket, dir string, gid int, version strin
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	lock, err := guestLock(filepath.Join(dir, "service.lock"))
+	lock, err := lockFile(filepath.Join(dir, "service.lock"))
 	if err != nil {
 		return err
 	}
@@ -141,7 +141,7 @@ func Serve(ctx context.Context, host, socket, dir string, gid int, version strin
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 			snapshot := metrics.snapshot(host, dir)
-			return CollectGuests(ctx, dir, snapshot)
+			return collectGuestIPs(ctx, dir, snapshot)
 		})
 	})
 	errCh := make(chan error, 1)
@@ -164,6 +164,23 @@ func Serve(ctx context.Context, host, socket, dir string, gid int, version strin
 		return serveErr
 	}
 	return shutdownErr
+}
+
+// Locks have stable inodes. Closing (not explicitly unlocking) lets inherited
+// descriptors keep exclusion if the helper exits before its query process.
+func lockFile(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return f, nil
 }
 
 func allowedPeer(conn net.Conn, gid int) bool {

@@ -115,18 +115,18 @@ func TestGuestCooldownSurvivesCollectorRestart(t *testing.T) {
 	if state.Failures != 0 || state.Next.Sub(state.CollectedAt) != time.Minute {
 		t.Fatalf("success: %+v", state)
 	}
-	AttachGuestIPs(dir, snapshot.Host, snapshot.VMs, time.Now())
+	attachGuestIPs(dir, snapshot.Host, snapshot.VMs, time.Now())
 	vm := snapshot.VMs[0]
 	if !slices.Equal(vm.IPs, state.IPs) || vm.IPsCollectedAt == nil || !vm.IPsCollectedAt.Equal(state.CollectedAt) || vm.IPsTTLSeconds != 900 {
 		t.Fatalf("sample: %+v", vm)
 	}
-	AttachGuestIPs(dir, snapshot.Host, snapshot.VMs, time.Now().Add(16*time.Minute))
+	attachGuestIPs(dir, snapshot.Host, snapshot.VMs, time.Now().Add(16*time.Minute))
 	if snapshot.VMs[0].IPsCollectedAt != nil {
 		t.Fatal("retained expired IPs")
 	}
 	snapshot.VMs[0].Uptime = new(int64(0))
 	snapshot.VMs[0].CollectedAt = new(time.Now().UTC())
-	AttachGuestIPs(dir, snapshot.Host, snapshot.VMs, time.Now())
+	attachGuestIPs(dir, snapshot.Host, snapshot.VMs, time.Now())
 	if snapshot.VMs[0].IPsCollectedAt != nil {
 		t.Fatal("retained pre-boot IPs")
 	}
@@ -154,7 +154,7 @@ func TestGuestCooldownSurvivesCollectorRestart(t *testing.T) {
 	}
 }
 
-func TestGuestConcurrentCollectorsAndCancellation(t *testing.T) {
+func TestGuestWorkersStopOnCancellation(t *testing.T) {
 	dir := t.TempDir()
 	snapshot := guestInventory()
 	for id := 102; id < 120; id++ {
@@ -181,12 +181,6 @@ func TestGuestConcurrentCollectorsAndCancellation(t *testing.T) {
 			t.Fatal("workers did not start")
 		}
 	}
-	if err := collectGuests(t.Context(), dir, snapshot.Host, guestTargets(snapshot), lookup); err != nil {
-		t.Fatal(err)
-	}
-	if calls.Load() != 8 {
-		t.Fatal("overlapping collector")
-	}
 	cancel()
 	select {
 	case <-done:
@@ -208,7 +202,7 @@ func TestGuestConcurrentCollectorsAndCancellation(t *testing.T) {
 func TestQueryProcessInheritsLockAndTimeoutReaps(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "101.lock")
-	lock, err := guestLock(path)
+	lock, err := lockFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +222,7 @@ func TestQueryProcessInheritsLockAndTimeoutReaps(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	other, err := guestLock(path)
+	other, err := lockFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,14 +239,14 @@ func TestQueryProcessInheritsLockAndTimeoutReaps(t *testing.T) {
 		t.Fatal("did not reap query")
 	}
 	lock.Close()
-	other, err = guestLock(path)
+	other, err = lockFile(path)
 	if err != nil || other == nil {
 		t.Fatalf("query descendants retained lock after timeout: %v", err)
 	}
 	other.Close()
 }
 
-func TestGuestSkipsIneligibleAndStaleInventory(t *testing.T) {
+func TestGuestSkipsIneligibleAndUnavailableInventory(t *testing.T) {
 	dir := t.TempDir()
 	snapshot := guestInventory()
 	snapshot.VMs = []virt.VM{
@@ -262,12 +256,13 @@ func TestGuestSkipsIneligibleAndStaleInventory(t *testing.T) {
 		{ID: 4, Status: "running"},
 		{ID: 5, Status: "running", QMPStatus: "shutdown"},
 	}
-	if err := CollectGuests(t.Context(), dir, snapshot); err != nil {
+	if err := collectGuestIPs(t.Context(), dir, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	snapshot = guestInventory()
-	snapshot.CollectedAt = time.Now().Add(-2 * time.Minute)
-	if err := CollectGuests(t.Context(), dir, snapshot); err == nil {
-		t.Fatal("accepted stale inventory")
+	metrics := newCollector()
+	metrics.inventoryAt = time.Now().Add(-2 * time.Minute)
+	snapshot = metrics.snapshot(snapshot.Host, dir)
+	if err := collectGuestIPs(t.Context(), dir, snapshot); err == nil {
+		t.Fatal("accepted expired inventory from collector")
 	}
 }

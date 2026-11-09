@@ -50,10 +50,8 @@ func openMonitor(ctx context.Context, path string, guest bool) (*monitor, error)
 	}
 	m := &monitor{conn: conn, reader: bufio.NewReader(conn), guest: guest}
 	m.stop = context.AfterFunc(ctx, func() { _ = conn.Close() })
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		deadline = time.Now().Add(3 * time.Second)
-	}
+	// QMP and QGA callers set the observation deadline.
+	deadline, _ := ctx.Deadline()
 	if err := conn.SetDeadline(deadline); err != nil {
 		m.Close()
 		return nil, err

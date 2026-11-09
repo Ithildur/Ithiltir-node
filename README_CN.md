@@ -82,13 +82,13 @@
 
 Node `0.3.0` 配套 Dash `0.4.0` 和同版本 `pve-cache`。已有 HTTP 宿主机上报保持兼容；VM 历史需要 `grpc` 或 `auto` 传输，以及正确转发 gRPC 服务路径的代理。
 
-普通 Node 可选读取 root helper 的 Unix socket，不需要虚拟化版 Node。Linux 安装命令追加 `--pve` 时，Dash 安装器安装预编译的 `pve-cache` 和 systemd 服务，Node 仍以普通用户运行。Dash 发布包必须包含匹配版本的 helper；不需要现场编译、PVE 用户或 API token。
+普通 Node 可选读取 root helper 的 Unix socket，不需要虚拟化版 Node。Dash 管理台的 PVE 部署命令会为 Linux 安装器添加 `--pve`，安装预编译的 `pve-cache` 和 systemd 服务，并配置历史查询所需的 `ITHILTIR_NODE_TRANSPORT=grpc`。Node 仍以普通用户运行。Dash 发布包必须包含匹配版本的 helper；不需要现场编译、PVE 用户或 API token。
 
 手动部署时，root 将 `pve-cache` 放在普通 node 无法修改的目录，准备 root 所有、运行组可读的 `/run/ithiltir-node`，以 root 服务运行 `pve-cache --group ithiltir`，由它持有基础采集、IP 慢采集及本地查询 socket。为 `node push` 设置 `ITHILTIR_NODE_PVE_SOCKET=/run/ithiltir-node/pve.sock` 后启用独立 VM 上报。未设置时不读取缓存、不启动 VM 推送任务。`pve-cache --version` 返回与 node 相同的发布版本；node 自更新不更新 root 采集工具。
 
 helper 在内存中保存每台 VM 的观测结果。8 个 worker 按顺序选择到期 VM，同一 VM 不重叠查询，采样间隔至少 3 秒；单次观测超时 2 秒，完成一台即可读取一台，不等待其他 VM，也没有整轮硬截止。只有 QMP 状态为 `running` 才采集动态指标和 IP；其他 VM 保留配置与状态，模板排除。CPU 使用进程计数差值、VM vCPU 配额及宿主 CPU 数计算，不受 helper CPU 亲和性影响；内存保持 PVE cgroup/balloon 口径，磁盘和 tap 网卡字节数为累计计数。配置每 3 秒刷新，磁盘容量每 60 秒单独查询 PVE，超过 2 分钟后省略。Node 按现有 3 秒 VM 上报节奏从 helper Unix socket 读取当前快照。 PVE RRD 历史仍通过 helper 按需查询，不包含 LXC 和 VM 控制。
 
-Guest Agent IP 通过可选 `ips` 数组返回，每台 VM 最多 1024 个不重复的 IPv4/IPv6 地址，包含私网地址，排除回环、链路本地、未指定、多播及非法地址。IP 通过本机 QGA socket 独立采集，只查询 QMP 状态明确为 `running` 且启用了 Guest Agent 的 VM。调度器每 3 秒检查到期任务，最多 8 路并发，每台 VM 总超时 3 秒，每轮预算 10 秒，轮次不重叠。成功后间隔 60 秒再查，失败按 1、2、5 分钟退避；健康刷新优先，失败重试最多占用 2 个槽位。这些间隔是最小等待时间，负载饱和时查询可能推迟。VM 重启或 agent 配置变化会清除该 VM 的旧 IP 和冷却状态。采集锁防止 IP 轮次重叠；仅 root 可读的 `/run/ithiltir-node/pve-guest` 状态可跨 helper 重启保留，宿主重启后重建。基础采集只读 IP 缓存，不等待 QGA。
+Guest Agent IP 通过可选 `ips` 数组返回，每台 VM 最多 1024 个不重复的 IPv4/IPv6 地址，包含私网地址，排除回环、链路本地、未指定、多播及非法地址。IP 通过本机 QGA socket 独立采集，只查询 QMP 状态明确为 `running` 且启用了 Guest Agent 的 VM。调度器每 3 秒检查到期任务，最多 8 路并发，每台 VM 总超时 3 秒，每轮预算 10 秒，轮次不重叠。成功后间隔 60 秒再查，失败按 1、2、5 分钟退避；健康刷新优先，失败重试最多占用 2 个槽位。这些间隔是最小等待时间，负载饱和时查询可能推迟。VM 重启或 agent 配置变化会清除该 VM 的旧 IP 和冷却状态。helper 进程锁保证单进程运行，IP 采集循环等待当前轮次完成后再启动下一轮；仅 root 可读的 `/run/ithiltir-node/pve-guest` 状态可跨 helper 重启保留，宿主重启后重建。基础采集只读 IP 缓存，不等待 QGA。
 
 ## 构建
 

@@ -115,7 +115,7 @@ func TestHistoryCancellationKeepsVMLockUntilQueryReturns(t *testing.T) {
 	if _, err := h.get(t.Context(), other); !errors.Is(err, virt.ErrBusy) {
 		t.Fatalf("overlapping VM query: %v", err)
 	}
-	lock, err := guestLock(filepath.Join(h.dir, "history-101.lock"))
+	lock, err := lockFile(filepath.Join(h.dir, "history-101.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestHistoryCancellationKeepsVMLockUntilQueryReturns(t *testing.T) {
 	}
 	once.Do(func() { close(release) })
 	h.wg.Wait()
-	lock, err = guestLock(filepath.Join(h.dir, "history-101.lock"))
+	lock, err = lockFile(filepath.Join(h.dir, "history-101.lock"))
 	if err != nil || lock == nil {
 		t.Fatal("query did not release lock", err)
 	}

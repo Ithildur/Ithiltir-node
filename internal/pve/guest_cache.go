@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"Ithiltir-node/internal/virt"
@@ -30,23 +29,6 @@ type guestState struct {
 	Agent       string    `json:"agent,omitempty"`
 	CollectedAt time.Time `json:"collected_at"`
 	IPs         []string  `json:"ips"`
-}
-
-// Locks have stable inodes. Closing (not explicitly unlocking) lets inherited
-// descriptors keep exclusion if the collector exits before its query process.
-func guestLock(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return f, nil
 }
 
 func readGuest(path string) (guestState, error) {
@@ -93,12 +75,11 @@ type guestTarget struct {
 	agent string
 }
 
-// CollectGuests reads current configuration and boot identity so a newly
+// collectGuestIPs reads current configuration and boot identity so a newly
 // enabled agent or restarted VM does not inherit an old retry delay.
-func CollectGuests(ctx context.Context, dir string, snapshot virt.Snapshot) error {
-	now := time.Now().UTC()
-	if snapshot.Status != "ok" || snapshot.CollectedAt.After(now) || now.Sub(snapshot.CollectedAt) > time.Duration(snapshot.TTLSeconds)*time.Second {
-		return errors.New("guest collection requires a fresh successful inventory")
+func collectGuestIPs(ctx context.Context, dir string, snapshot virt.Snapshot) error {
+	if snapshot.Status != "ok" {
+		return errors.New("guest collection requires a successful inventory")
 	}
 	hostCPUs, err := hostCPUCount(ctx)
 	if err != nil {
@@ -124,18 +105,11 @@ func CollectGuests(ctx context.Context, dir string, snapshot virt.Snapshot) erro
 	return collectGuests(ctx, dir, snapshot.Host, targets, guestIPs)
 }
 
+// The helper's guest collection loop runs one round at a time.
 func collectGuests(ctx context.Context, dir, host string, targets []guestTarget, lookup func(context.Context, guestTarget) ([]string, error)) error {
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	lock, err := guestLock(filepath.Join(dir, "collector.lock"))
-	if err != nil || lock == nil {
-		return err
-	}
-	defer lock.Close()
 	type candidate struct {
 		target   guestTarget
-		next     time.Time
+		state    guestState
 		priority int // healthy first, then first observations, then retries
 	}
 	now := time.Now().UTC()
@@ -163,10 +137,10 @@ func collectGuests(ctx context.Context, dir, host string, targets []guestTarget,
 		if state.Failures > 0 {
 			priority = 2
 		}
-		candidates = append(candidates, candidate{target, state.Next, priority})
+		candidates = append(candidates, candidate{target, state, priority})
 	}
 	slices.SortStableFunc(candidates, func(a, b candidate) int {
-		return cmp.Or(cmp.Compare(a.priority, b.priority), a.next.Compare(b.next))
+		return cmp.Or(cmp.Compare(a.priority, b.priority), a.state.Next.Compare(b.state.Next))
 	})
 	jobs := make(chan candidate)
 	retries := make(chan struct{}, 2)
@@ -185,7 +159,7 @@ func collectGuests(ctx context.Context, dir, host string, targets []guestTarget,
 						continue
 					}
 				}
-				err := queryGuest(ctx, dir, host, job.target, lookup)
+				err := queryGuest(ctx, dir, job.target, job.state, lookup)
 				if retry {
 					<-retries
 				}
@@ -208,18 +182,11 @@ send:
 	return ctx.Err()
 }
 
-func queryGuest(ctx context.Context, dir, host string, target guestTarget, lookup func(context.Context, guestTarget) ([]string, error)) error {
+func queryGuest(ctx context.Context, dir string, target guestTarget, state guestState, lookup func(context.Context, guestTarget) ([]string, error)) error {
 	base := filepath.Join(dir, strconv.Itoa(target.id))
-	state, err := readGuest(base + ".json")
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC()
 	if ctx.Err() != nil {
 		return ctx.Err()
-	}
-	if now.Before(state.Next) {
-		return nil
 	}
 	previous := state
 	state.Failures = min(max(state.Failures, 0)+1, 3)
@@ -239,14 +206,13 @@ func queryGuest(ctx context.Context, dir, host string, target guestTarget, looku
 	if err != nil {
 		return err
 	}
-	state.Host, state.Start, state.Agent = host, target.start, target.agent
 	state.IPs, state.CollectedAt = ips, time.Now().UTC()
 	state.Failures, state.Next = 0, state.CollectedAt.Add(time.Minute)
 	return writeGuest(base+".json", state)
 }
 
-// AttachGuestIPs only reads slow data. Its original timestamp is preserved.
-func AttachGuestIPs(dir, host string, vms []virt.VM, now time.Time) {
+// attachGuestIPs only reads slow data. Its original timestamp is preserved.
+func attachGuestIPs(dir, host string, vms []virt.VM, now time.Time) {
 	for i := range vms {
 		vm := &vms[i]
 		vm.IPs, vm.IPsCollectedAt, vm.IPsTTLSeconds = nil, nil, 0

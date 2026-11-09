@@ -59,10 +59,9 @@ func (c *Client) Capabilities(ctx context.Context) (Capabilities, error) {
 	err = json.Unmarshal(raw, &caps)
 	return caps, err
 }
+
+// History sends a query already validated by the Node session.
 func (c *Client) History(ctx context.Context, q HistoryQuery) ([]byte, error) {
-	if err := q.Validate(); err != nil {
-		return nil, err
-	}
 	body, err := json.Marshal(q)
 	if err != nil {
 		return nil, err

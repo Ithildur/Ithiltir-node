@@ -154,7 +154,7 @@ func (c *collector) snapshot(host, dir string) virt.Snapshot {
 		}
 	}
 	c.mu.Unlock()
-	AttachGuestIPs(dir, host, result.VMs, now)
+	attachGuestIPs(dir, host, result.VMs, now)
 	return result
 }
 
