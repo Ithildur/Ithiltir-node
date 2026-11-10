@@ -123,8 +123,8 @@ func TestMetricsRecoverWithLatestSnapshot(t *testing.T) {
 			wait := tc.interval + time.Second
 			minimum := tc.interval - 100*time.Millisecond
 			if tc.timeout {
-				wait = 7500 * time.Millisecond
-				minimum = 6900 * time.Millisecond
+				wait = 6500 * time.Millisecond
+				minimum = 5900 * time.Millisecond
 			}
 			select {
 			case second = <-received:

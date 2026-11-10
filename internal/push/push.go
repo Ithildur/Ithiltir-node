@@ -25,7 +25,7 @@ import (
 	"Ithiltir-node/internal/selfupdate"
 )
 
-const metricsTimeout = 7 * time.Second
+const metricsTimeout = 6 * time.Second
 
 var (
 	staticRetryDelay             = 10 * time.Second
