@@ -93,6 +93,8 @@ Response handling:
 
 ## Report Config
 
+Request deadlines are set by each operation for both HTTP and gRPC: host metrics use `max(6 seconds, reporting interval + 3 seconds)`, static reports and VM reports use 10 seconds, and installation identity lookup has a 15-second total budget. Automatic transport probing retains its 2-second limit within the operation's budget. Metrics targets send concurrently within a round; the next round waits for all targets to finish and reads the latest snapshot. Rounds never overlap, and no extra wait is added if the reporting interval has elapsed.
+
 Default config path:
 
 - Linux/macOS: `/var/lib/ithiltir-node/report.yaml`

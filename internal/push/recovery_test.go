@@ -39,14 +39,17 @@ func TestMetricsRecoverWithLatestSnapshot(t *testing.T) {
 		transport string
 		timeout   bool
 		interval  time.Duration
+		deadline  time.Duration
 	}{
-		{transport: "http", timeout: true, interval: 8 * time.Second},
-		{transport: "grpc", timeout: true, interval: 8 * time.Second},
+		{transport: "http", timeout: true, interval: 8 * time.Second, deadline: 11 * time.Second},
+		{transport: "grpc", timeout: true, interval: 8 * time.Second, deadline: 11 * time.Second},
+		{transport: "http", timeout: true, interval: 2 * time.Second, deadline: 6 * time.Second},
+		{transport: "grpc", timeout: true, interval: 2 * time.Second, deadline: 6 * time.Second},
 		{transport: "http", interval: 2 * time.Second},
 	} {
 		name := tc.transport + "/rejected"
 		if tc.timeout {
-			name = tc.transport + "/timeout"
+			name = tc.transport + "/timeout/" + tc.interval.String()
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("ITHILTIR_NODE_TRANSPORT", tc.transport)
@@ -123,8 +126,8 @@ func TestMetricsRecoverWithLatestSnapshot(t *testing.T) {
 			wait := tc.interval + time.Second
 			minimum := tc.interval - 100*time.Millisecond
 			if tc.timeout {
-				wait = 6500 * time.Millisecond
-				minimum = 5900 * time.Millisecond
+				wait = tc.deadline + 500*time.Millisecond
+				minimum = tc.deadline - 100*time.Millisecond
 			}
 			select {
 			case second = <-received:

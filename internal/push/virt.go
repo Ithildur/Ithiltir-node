@@ -80,14 +80,14 @@ func pushVirt(ctx context.Context, target *target, path string) {
 }
 
 func sendVirt(ctx context.Context, target *target, body []byte) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	client, err := target.rpcClient(ctx)
 	if err != nil {
 		return err
 	}
 	if client != nil {
-		callCtx, cancel := rpcTimeout(ctx, target.secret)
-		defer cancel()
-		_, err := client.Virt(callCtx, &nodewire.Report{Json: body})
+		_, err := client.Virt(rpcContext(ctx, target.secret), &nodewire.Report{Json: body})
 		return err
 	}
 	resp, err := sendVirtHTTP(ctx, target, body)

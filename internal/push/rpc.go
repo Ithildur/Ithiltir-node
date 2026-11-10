@@ -123,14 +123,8 @@ func (t *target) closeRPC() {
 func rpcContext(ctx context.Context, secret string) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, "x-node-secret", secret)
 }
-func rpcTimeout(ctx context.Context, secret string) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	return rpcContext(ctx, secret), cancel
-}
 func (t *target) rpcMetrics(ctx context.Context, client nodewire.NodeClient, body []byte) (*selfupdate.Manifest, error) {
-	ctx, cancel := rpcTimeout(ctx, t.secret)
-	defer cancel()
-	reply, err := client.Metrics(ctx, &nodewire.Report{Json: body})
+	reply, err := client.Metrics(rpcContext(ctx, t.secret), &nodewire.Report{Json: body})
 	if err != nil {
 		return nil, err
 	}
@@ -145,8 +139,6 @@ func (t *target) rpcStatic(ctx context.Context, client nodewire.NodeClient, snap
 	if err != nil {
 		return err
 	}
-	ctx, cancel := rpcTimeout(ctx, t.secret)
-	defer cancel()
-	_, err = client.Static(ctx, &nodewire.Report{Json: body})
+	_, err = client.Static(rpcContext(ctx, t.secret), &nodewire.Report{Json: body})
 	return err
 }

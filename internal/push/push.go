@@ -25,8 +25,6 @@ import (
 	"Ithiltir-node/internal/selfupdate"
 )
 
-const metricsTimeout = 6 * time.Second
-
 var (
 	staticRetryDelay             = 10 * time.Second
 	staticChangeCheckMinInterval = 10 * time.Second
@@ -151,6 +149,7 @@ type agent struct {
 	debug            bool
 	cache            *Cache
 	targets          []*target
+	metricsTimeout   time.Duration
 	roundErrLimiter  logLimiter
 	staticWG         sync.WaitGroup
 	staticMu         sync.Mutex
@@ -195,7 +194,7 @@ func newTarget(spec reportcfg.Target, requireHTTPS bool) (*target, error) {
 	}
 	return &target{
 		rpc:              rpcTarget{mode: mode},
-		client:           &http.Client{Timeout: 10 * time.Second},
+		client:           &http.Client{},
 		id:               spec.ID,
 		endpoint:         endpoint,
 		hostIsIP:         net.ParseIP(host) != nil,
@@ -296,6 +295,8 @@ func (t *target) wakeStatic(reason string) {
 }
 
 func (t *target) sendStatic(ctx context.Context, endpoint string, snap *metrics.Static) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	client, err := t.rpcClient(ctx)
 	if err != nil {
 		return err
@@ -397,6 +398,7 @@ func newAgent(specs []reportcfg.Target, interval time.Duration, s source, debug 
 		debug:           debug,
 		cache:           cache,
 		targets:         targets,
+		metricsTimeout:  max(6*time.Second, interval+3*time.Second),
 		roundErrLimiter: logLimiter{cooldown: time.Minute},
 	}
 
@@ -467,9 +469,7 @@ func FetchIdentity(ctx context.Context, spec reportcfg.Target, requireHTTPS bool
 		identity := target.rpc.identity
 		target.rpc.mu.Unlock()
 		if identity == nil {
-			callCtx, cancel := rpcTimeout(ctx, target.secret)
-			identity, err = client.Identify(callCtx, &nodewire.Empty{})
-			cancel()
+			identity, err = client.Identify(rpcContext(ctx, target.secret), &nodewire.Empty{})
 			if err != nil {
 				return Identity{}, err
 			}
@@ -717,7 +717,7 @@ func (a *agent) sendRound(ctx context.Context) (bool, error) {
 	var wg sync.WaitGroup
 	for _, target := range a.targets {
 		wg.Go(func() {
-			callCtx, cancel := context.WithTimeout(ctx, metricsTimeout)
+			callCtx, cancel := context.WithTimeout(ctx, a.metricsTimeout)
 			defer cancel()
 			ok, manifest, err := a.sendTarget(callCtx, target, body)
 			timedOut := ctx.Err() == nil && errors.Is(callCtx.Err(), context.DeadlineExceeded)
