@@ -93,11 +93,13 @@ func TestQuerySessionBoundsAndCancelsQueuedWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer destination.closeRPC()
+	pve := &pveTarget{target: destination}
+	defer pve.close()
 	helper := virt.NewClient(socket)
 	defer helper.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
-	_ = destination.querySession(ctx, helper, "1.0.0")
+	_ = pve.querySession(ctx, helper, "1.0.0")
 	select {
 	case err := <-verified:
 		if err != nil {
@@ -146,6 +148,7 @@ func TestQuerySessionForwardsAndCancelsLocalRequest(t *testing.T) {
 	go helperServer.Serve(listener)
 	defer helperServer.Close()
 	verified := make(chan error, 1)
+	closeHostRPC := make(chan func(), 1)
 	service := &testRPC{connect: func(stream grpc.BidiStreamingServer[nodewire.NodeMessage, nodewire.DashMessage]) error {
 		first, err := stream.Recv()
 		if err != nil {
@@ -170,6 +173,7 @@ func TestQuerySessionForwardsAndCancelsLocalRequest(t *testing.T) {
 		if response.Id != "first" || response.GetResult() == nil || response.GetResult().Error != "" || string(response.GetResult().Json) != `{"source":"pve_rrd"}` {
 			t.Error("query response changed")
 		}
+		(<-closeHostRPC)()
 		if err := query("second"); err != nil {
 			verified <- err
 			return err
@@ -199,11 +203,21 @@ func TestQuerySessionForwardsAndCancelsLocalRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer destination.closeRPC()
+	pve := &pveTarget{target: destination}
+	defer pve.close()
 	helper := virt.NewClient(socket)
 	defer helper.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
-	_ = destination.querySession(ctx, helper, "1.0.0")
+	client, err := destination.rpcClient(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := destination.rpcMetrics(ctx, client, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	closeHostRPC <- destination.closeRPC
+	_ = pve.querySession(ctx, helper, "1.0.0")
 	select {
 	case err := <-verified:
 		if err != nil {
@@ -277,11 +291,13 @@ func TestQuerySessionSurvivesFailedCapabilityProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer destination.closeRPC()
+	pve := &pveTarget{target: destination}
+	defer pve.close()
 	helper := virt.NewClient(socket)
 	defer helper.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
 	defer cancel()
-	err = destination.querySession(ctx, helper, "1.0.0")
+	err = pve.querySession(ctx, helper, "1.0.0")
 	select {
 	case <-verified:
 	default:

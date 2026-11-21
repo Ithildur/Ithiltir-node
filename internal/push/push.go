@@ -160,7 +160,7 @@ type agent struct {
 
 type target struct {
 	mu           sync.RWMutex
-	client       *http.Client
+	transport    *http.Transport
 	id           int
 	endpoint     *url.URL
 	hostIsIP     bool
@@ -194,7 +194,6 @@ func newTarget(spec reportcfg.Target, requireHTTPS bool) (*target, error) {
 	}
 	return &target{
 		rpc:              rpcTarget{mode: mode},
-		client:           &http.Client{},
 		id:               spec.ID,
 		endpoint:         endpoint,
 		hostIsIP:         net.ParseIP(host) != nil,
@@ -204,6 +203,34 @@ func newTarget(spec reportcfg.Target, requireHTTPS bool) (*target, error) {
 		staticErrLimiter: logLimiter{cooldown: time.Minute},
 		errLimiter:       logLimiter{cooldown: time.Minute},
 	}, nil
+}
+
+func (t *target) httpClient() *http.Client {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.transport == nil {
+		t.transport = http.DefaultTransport.(*http.Transport).Clone()
+	}
+	return &http.Client{Transport: t.transport}
+}
+
+func (t *target) resetHTTP() {
+	t.mu.Lock()
+	previous := t.transport
+	if previous != nil {
+		t.transport = previous.Clone()
+	}
+	t.mu.Unlock()
+	if previous != nil {
+		previous.CloseIdleConnections()
+	}
+}
+
+func (t *target) close() {
+	t.closeRPC()
+	if t.transport != nil {
+		t.transport.CloseIdleConnections()
+	}
 }
 
 func (t *target) hostType() string {
@@ -304,7 +331,7 @@ func (t *target) sendStatic(ctx context.Context, endpoint string, snap *metrics.
 	if client != nil {
 		return t.rpcStatic(ctx, client, snap)
 	}
-	return sendStatic(ctx, t.client, endpoint, t.secret, snap)
+	return sendStatic(ctx, t.httpClient(), endpoint, t.secret, snap)
 }
 
 func (a *agent) runStatic(ctx context.Context, target *target) {
@@ -439,7 +466,7 @@ func sendReport(ctx context.Context, target *target, body []byte) (*http.Respons
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Node-Secret", target.secret)
 
-	return target.client.Do(req)
+	return target.httpClient().Do(req)
 }
 
 type Identity struct {
@@ -459,7 +486,7 @@ func FetchIdentity(ctx context.Context, spec reportcfg.Target, requireHTTPS bool
 	if err != nil {
 		return Identity{}, err
 	}
-	defer target.closeRPC()
+	defer target.close()
 	client, err := target.rpcClient(ctx)
 	if err != nil {
 		return Identity{}, err
@@ -520,7 +547,7 @@ func sendIdentity(ctx context.Context, target *target) (*http.Response, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Node-Secret", target.secret)
-	return target.client.Do(req)
+	return target.httpClient().Do(req)
 }
 
 func (t *target) handleError(ctx context.Context, err error) error {
@@ -647,15 +674,13 @@ func StartWithCache(ctx context.Context, targets []reportcfg.Target, interval ti
 		return err
 	}
 	runCtx, stop := context.WithCancel(ctx)
-	virtWG := startVirt(runCtx, agent.targets)
-	sessionWG := agent.startSessions(runCtx)
+	waitPVE := startPVE(runCtx, agent.targets, s.Version())
 	defer func() {
 		stop()
-		virtWG.Wait()
-		sessionWG.Wait()
+		waitPVE()
 		agent.staticWG.Wait()
 		for _, target := range agent.targets {
-			target.closeRPC()
+			target.close()
 		}
 	}()
 
@@ -722,6 +747,8 @@ func (a *agent) sendRound(ctx context.Context) (bool, error) {
 			ok, manifest, err := a.sendTarget(callCtx, target, body)
 			timedOut := ctx.Err() == nil && errors.Is(callCtx.Err(), context.DeadlineExceeded)
 			if timedOut {
+				target.closeRPC()
+				target.resetHTTP()
 				ok, err = false, nil
 				target.errLimiter.logf("push target %d timeout: %v", target.id, callCtx.Err())
 			}

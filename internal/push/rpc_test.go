@@ -22,7 +22,7 @@ import (
 
 type testRPC struct {
 	nodewire.UnimplementedNodeServer
-	metrics, static, virt   atomic.Int32
+	metrics, static         atomic.Int32
 	identifies              atomic.Int32
 	identifyErr, metricsErr error
 	connect                 func(grpc.BidiStreamingServer[nodewire.NodeMessage, nodewire.DashMessage]) error
@@ -58,10 +58,6 @@ func (s *testRPC) Metrics(ctx context.Context, in *nodewire.Report) (*nodewire.R
 }
 func (s *testRPC) Static(context.Context, *nodewire.Report) (*nodewire.Empty, error) {
 	s.static.Add(1)
-	return &nodewire.Empty{}, nil
-}
-func (s *testRPC) Virt(context.Context, *nodewire.Report) (*nodewire.Empty, error) {
-	s.virt.Add(1)
 	return &nodewire.Empty{}, nil
 }
 
@@ -110,10 +106,7 @@ func TestRPCReportsShareConnectionAndPreserveUpdate(t *testing.T) {
 	if err := destination.rpcStatic(t.Context(), client, &metrics.Static{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sendVirt(t.Context(), destination, []byte("{}")); err != nil {
-		t.Fatal(err)
-	}
-	if destination.rpc.conn != conn || service.metrics.Load() != 1 || service.static.Load() != 1 || service.virt.Load() != 1 || posts.Load() != 0 {
+	if destination.rpc.conn != conn || service.metrics.Load() != 1 || service.static.Load() != 1 || posts.Load() != 0 {
 		t.Fatal("report transport was duplicated")
 	}
 	identity, err := FetchIdentity(t.Context(), spec, false)

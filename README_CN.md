@@ -37,7 +37,7 @@
 - target URL 以 `/metrics` 结尾时，静态元数据会发到同级 `/static` URL
 - Debug 本地接口：`GET http://127.0.0.1:${NODE_PORT:-9101}/`
 - HTTPS target 默认可回落 HTTP；加 `--require-https` 后禁止回落
-- 实时指标请求（HTTP/gRPC）超时为 `max(6 秒, 上报周期 + 3 秒)`。任一目标达到该超时，当前轮次结束后立即开始下一轮；其他情况按配置的上报周期发送，当前轮次已耗尽周期时也不额外等待。
+- 实时指标请求（HTTP/gRPC）超时为 `max(6 秒, 上报周期 + 3 秒)`。任一目标达到该超时，当前轮次结束后立即开始下一轮，超时的目标使用新连接。其他情况按配置的上报周期发送，当前轮次已耗尽周期时也不额外等待。
 - 每轮读取最新快照，不积压旧报告，也不重叠执行上报轮次。
 
 上报目标命令：
@@ -82,9 +82,9 @@
 
 Node `0.3.0` 配套 Dash `0.4.0` 和同版本 `pve-cache`。已有 HTTP 宿主机上报保持兼容；VM 历史需要 `grpc` 或 `auto` 传输，以及正确转发 gRPC 服务路径的代理。
 
-普通 Node 可选读取 root helper 的 Unix socket，不需要虚拟化版 Node。Dash 管理台的 PVE 部署命令会为 Linux 安装器添加 `--pve`，安装预编译的 `pve-cache` 和 systemd 服务，并配置历史查询所需的 `ITHILTIR_NODE_TRANSPORT=grpc`。Node 仍以普通用户运行。Dash 发布包必须包含匹配版本的 helper；不需要现场编译、PVE 用户或 API token。
+Dash 管理台的 PVE 部署命令会为 Linux 安装器添加 `--pve`，安装预编译的 `pve-cache` 和 systemd 服务，并为普通用户运行的 Node 启用 gRPC。VM 快照和历史查询共用一条 gRPC 连接，与宿主机指标和静态信息的连接独立。
 
-手动部署时，root 将 `pve-cache` 放在普通 node 无法修改的目录，准备 root 所有、运行组可读的 `/run/ithiltir-node`，以 root 服务运行 `pve-cache --group ithiltir`，由它持有基础采集、IP 慢采集及本地查询 socket。为 `node push` 设置 `ITHILTIR_NODE_PVE_SOCKET=/run/ithiltir-node/pve.sock` 后启用独立 VM 上报。未设置时不读取缓存、不启动 VM 推送任务。`pve-cache --version` 返回与 node 相同的发布版本；node 自更新不更新 root 采集工具。
+手动部署时，root 将 `pve-cache` 放在普通 node 无法修改的目录，准备 root 所有、运行组可读的 `/run/ithiltir-node`，以 root 服务运行 `pve-cache --group ithiltir`，由它持有基础采集、IP 慢采集及本地查询 socket。为 `node push` 设置 `ITHILTIR_NODE_PVE_SOCKET=/run/ithiltir-node/pve.sock` 后启用 VM 上报，使用 gRPC 时也启用查询会话。未设置时两项任务都不启动。`pve-cache --version` 返回与 node 相同的发布版本。Node 自更新不更新 root 采集工具。
 
 helper 在内存中保存每台 VM 的观测结果。8 个 worker 按顺序选择到期 VM，同一 VM 不重叠查询，采样间隔至少 3 秒；单次观测超时 2 秒，完成一台即可读取一台，不等待其他 VM，也没有整轮硬截止。只有 QMP 状态为 `running` 才采集动态指标和 IP；其他 VM 保留配置与状态，模板排除。CPU 使用进程计数差值、VM vCPU 配额及宿主 CPU 数计算，不受 helper CPU 亲和性影响；内存保持 PVE cgroup/balloon 口径，磁盘和 tap 网卡字节数为累计计数。配置每 3 秒刷新，磁盘容量每 60 秒单独查询 PVE，超过 2 分钟后省略。Node 按现有 3 秒 VM 上报节奏从 helper Unix socket 读取当前快照。 PVE RRD 历史仍通过 helper 按需查询，不包含 LXC 和 VM 控制。
 

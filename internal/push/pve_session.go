@@ -5,8 +5,6 @@ import (
 	"errors"
 	"log"
 	"math/rand/v2"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -17,56 +15,46 @@ import (
 	"Ithiltir-node/internal/virt"
 )
 
-func (a *agent) startSessions(ctx context.Context) *sync.WaitGroup {
-	wg := new(sync.WaitGroup)
-	for _, target := range a.targets {
-		wg.Go(func() {
-			path := strings.TrimSpace(os.Getenv("ITHILTIR_NODE_PVE_SOCKET"))
-			if path == "" {
-				path = virt.SocketPath
-			}
-			helper := virt.NewClient(path)
-			defer helper.Close()
-			delay := time.Second
-			for ctx.Err() == nil {
-				started := time.Now()
-				err := target.querySession(ctx, helper, a.source.Version())
-				if err == nil || ctx.Err() != nil {
-					return
-				}
-				if status.Code(err) == codes.Unauthenticated || status.Code(err) == codes.PermissionDenied {
-					log.Printf("node query session target=%d credentials rejected", target.id)
-					return
-				}
-				log.Printf("node query session target=%d: %v", target.id, err)
-				if time.Since(started) > time.Minute {
-					delay = time.Second
-				}
-				timer := time.NewTimer(delay + time.Duration(rand.Int64N(max(1, int64(delay/4)))))
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return
-				case <-timer.C:
-				}
-				delay = min(delay*2, time.Minute)
-			}
-		})
+func (p *pveTarget) runSession(ctx context.Context, path, version string) {
+	helper := virt.NewClient(path)
+	defer helper.Close()
+	delay := time.Second
+	for ctx.Err() == nil {
+		started := time.Now()
+		err := p.querySession(ctx, helper, version)
+		if err == nil || ctx.Err() != nil {
+			return
+		}
+		if status.Code(err) == codes.Unauthenticated || status.Code(err) == codes.PermissionDenied {
+			log.Printf("node query session target=%d credentials rejected", p.target.id)
+			return
+		}
+		log.Printf("node query session target=%d: %v", p.target.id, err)
+		if time.Since(started) > time.Minute {
+			delay = time.Second
+		}
+		timer := time.NewTimer(delay + time.Duration(rand.Int64N(max(1, int64(delay/4)))))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		delay = min(delay*2, time.Minute)
 	}
-	return wg
 }
 
-func (t *target) querySession(parent context.Context, helper *virt.Client, version string) error {
+func (p *pveTarget) querySession(parent context.Context, helper *virt.Client, version string) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	client, err := t.rpcClient(ctx)
+	client, err := p.rpcClient(ctx)
 	if err != nil {
 		return err
 	}
 	if client == nil {
 		return nil
 	}
-	stream, err := client.Connect(rpcContext(ctx, t.secret))
+	stream, err := client.Connect(rpcContext(ctx, p.target.secret))
 	if err != nil {
 		return err
 	}

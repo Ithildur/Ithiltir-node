@@ -57,8 +57,8 @@ func TestVirtPushUsesSeparateAuthenticatedEndpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer destination.closeRPC()
-			wg := startVirt(ctx, []*target{destination})
-			defer func() { cancel(); wg.Wait() }()
+			wait := startPVE(ctx, []*target{destination}, "1.0.0")
+			defer func() { cancel(); wait() }()
 			select {
 			case snapshot := <-received:
 				if err := snapshot.Validate(); err != nil {

@@ -13,29 +13,67 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"Ithiltir-node/internal/nodewire"
 	"Ithiltir-node/internal/virt"
 )
 
-// startVirt owns independent delivery loops; no VM operation runs in the host
-// metrics loop. Each target keeps only its latest successful delivery marker.
-func startVirt(ctx context.Context, targets []*target) *sync.WaitGroup {
-	wg := new(sync.WaitGroup)
-	path := strings.TrimSpace(os.Getenv("ITHILTIR_NODE_PVE_SOCKET"))
-	if path == "" {
-		return wg
-	}
-	for _, t := range targets {
-		if !strings.HasSuffix(t.endpoint.Path, "/metrics") {
-			log.Printf("virt target=%d requires a /metrics report URL", t.id)
-			continue
-		}
-		wg.Go(func() { pushVirt(ctx, t, path) })
-	}
-	return wg
+type pveTarget struct {
+	target *target
+	mu     sync.Mutex
+	conn   *grpc.ClientConn
 }
 
-func pushVirt(ctx context.Context, target *target, path string) {
+func startPVE(ctx context.Context, targets []*target, version string) func() {
+	var wg sync.WaitGroup
+	path := strings.TrimSpace(os.Getenv("ITHILTIR_NODE_PVE_SOCKET"))
+	if path == "" {
+		return wg.Wait
+	}
+	for _, t := range targets {
+		wg.Go(func() {
+			pve := &pveTarget{target: t}
+			defer pve.close()
+			var delivery sync.WaitGroup
+			if t.staticURL() != "" {
+				delivery.Go(func() { pve.pushVirt(ctx, path) })
+			} else {
+				log.Printf("virt target=%d requires a /metrics report URL", t.id)
+			}
+			pve.runSession(ctx, path, version)
+			delivery.Wait()
+		})
+	}
+	return wg.Wait
+}
+
+func (p *pveTarget) rpcClient(ctx context.Context) (nodewire.NodeClient, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.conn == nil {
+		t := p.target
+		t.rpc.mu.Lock()
+		enabled, err := t.selectRPC(ctx)
+		t.rpc.mu.Unlock()
+		if err != nil || !enabled {
+			return nil, err
+		}
+		p.conn, err = t.newRPCConn()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return nodewire.NewNodeClient(p.conn), nil
+}
+
+func (p *pveTarget) close() {
+	if p.conn != nil {
+		p.conn.Close()
+	}
+}
+
+func (p *pveTarget) pushVirt(ctx context.Context, path string) {
 	helper := virt.NewClient(path)
 	defer helper.Close()
 	var sent time.Time
@@ -60,10 +98,10 @@ func pushVirt(ctx context.Context, target *target, path string) {
 			body, marshalErr := json.Marshal(snapshot)
 			err = marshalErr
 			if err == nil {
-				err = sendVirt(ctx, target, body)
+				err = p.sendVirt(ctx, body)
 			}
 			if err != nil {
-				limiter.logf("virt push target=%d: %v", target.id, err)
+				limiter.logf("virt push target=%d: %v", p.target.id, err)
 				delay = min(delay*2, time.Minute)
 			} else {
 				sent, delay = snapshot.CollectedAt, 3*time.Second
@@ -79,13 +117,14 @@ func pushVirt(ctx context.Context, target *target, path string) {
 	}
 }
 
-func sendVirt(ctx context.Context, target *target, body []byte) error {
+func (p *pveTarget) sendVirt(ctx context.Context, body []byte) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	client, err := target.rpcClient(ctx)
+	client, err := p.rpcClient(ctx)
 	if err != nil {
 		return err
 	}
+	target := p.target
 	if client != nil {
 		_, err := client.Virt(rpcContext(ctx, target.secret), &nodewire.Report{Json: body})
 		return err
@@ -117,7 +156,6 @@ func sendVirtHTTP(ctx context.Context, target *target, body []byte) (*http.Respo
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Node-Secret", target.secret)
-	client := *target.client
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client := http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return client.Do(req)
 }
