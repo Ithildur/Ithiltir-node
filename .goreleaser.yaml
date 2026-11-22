@@ -47,6 +47,7 @@ builds:
 
     flags:
       - -trimpath
+      - -tags=grpcnotrace
     ldflags:
       - -s -w -X Ithiltir-node/internal/app.Version={{ if .Env.VERSION }}{{ .Env.VERSION }}{{ else }}{{ .Version }}{{ end }}
 

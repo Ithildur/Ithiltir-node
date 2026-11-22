@@ -94,7 +94,7 @@ Guest Agent IP 通过可选 `ips` 数组返回，每台 VM 最多 1024 个不重
 
 Linux 构建额外生成 `linux/pve_cache_linux_amd64` 和 `linux/pve_cache_linux_arm64`。Release 资产名为 `Ithiltir-pve-cache-linux-amd64`、`Ithiltir-pve-cache-linux-arm64`，与 node 共用版本及校验和文件。
 
-构建配置在 [`.goreleaser.yaml`](.goreleaser.yaml)。
+构建配置在 [`.goreleaser.yaml`](.goreleaser.yaml)。Node 使用 `grpcnotrace` 构建标签，省去 gRPC 的旧追踪页面。
 
 版本格式：
 

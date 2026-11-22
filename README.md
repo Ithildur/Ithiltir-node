@@ -94,7 +94,7 @@ Guest Agent IPs are returned in optional `ips` arrays, up to 1024 unique IPv4/IP
 
 Linux builds also produce `linux/pve_cache_linux_amd64` and `linux/pve_cache_linux_arm64`. Release assets are named `Ithiltir-pve-cache-linux-amd64` and `Ithiltir-pve-cache-linux-arm64`; they share the node version and checksum file.
 
-Build config lives in [`.goreleaser.yaml`](.goreleaser.yaml).
+Build config lives in [`.goreleaser.yaml`](.goreleaser.yaml). The Node build uses `grpcnotrace` to omit gRPC's legacy trace pages.
 
 Version format:
 
