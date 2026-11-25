@@ -1,17 +1,33 @@
-# Ithiltir-node
+<div align="center">
 
-[English](README.md)
+<h1>
+  <img src="docs/brandlogo.svg" width="48" height="48" align="center" alt="">
+  Ithiltir-node
+</h1>
 
-节点指标采集器，只有两种模式：
+自托管服务器监控采集器
 
-- `local`：提供本地节点页面和本地接口
-- `push`：向面板上报，同时保留本地缓存结果
+**[下载](https://github.com/Ithildur/Ithiltir-node/releases)** · [本地模式](#local) · [上报模式](#push) · [文档](#文档)
+
+[![release](https://img.shields.io/github/v/release/Ithildur/Ithiltir-node?label=release)](https://github.com/Ithildur/Ithiltir-node/releases) [![downloads](https://img.shields.io/github/downloads/Ithildur/Ithiltir-node/total?label=downloads)](https://github.com/Ithildur/Ithiltir-node/releases) [![license](https://img.shields.io/github/license/Ithildur/Ithiltir-node)](LICENSE)
+
+**简体中文** · [English](README.md)
+
+</div>
+
+Ithiltir-node 采集主机指标。运行 `local` 可在浏览器查看本机状态，运行 `push` 可向 [Ithiltir Dash](https://github.com/Ithildur/Ithiltir) 上报指标，同时在本机缓存最近一次上报。
+
+## 界面预览
+
+<p align="center">
+  <a href="image.png">
+    <img src="image.png" width="720" alt="Ithiltir-node 本地监控页面">
+  </a>
+</p>
 
 ## 模式
 
 ### Local
-
-![本地页面预览](image.png)
 
 ```bash
 ./node
@@ -40,7 +56,7 @@
 - 实时指标请求（HTTP/gRPC）超时为 `max(6 秒, 上报周期 + 3 秒)`。任一目标达到该超时，当前轮次结束后立即开始下一轮，超时的目标使用新连接。其他情况按配置的上报周期发送，当前轮次已耗尽周期时也不额外等待。
 - 每轮读取最新快照，不积压旧报告，也不重叠执行上报轮次。
 
-上报目标命令：
+#### 上报目标
 
 ```bash
 ./node report install <url> <key>
@@ -53,6 +69,10 @@
 `report update` 只用于轮换已有 target 的 key；URL 修改必须走 `report install`。
 配置文件包含 `version` 和 `targets`；每个 target 有 `id`、`url`、`key`，以及可选 `server_install_id`。
 写入使用原子 rename，并保持文件权限 `0600`。
+
+#### Node gRPC 传输
+
+为兼容已有安装，默认仍使用 HTTP。在 Node 服务环境中设置 `ITHILTIR_NODE_TRANSPORT=grpc`（仅 RPC）或 `auto`（发送报告前协商），再重启 Node。Dash 在现有 HTTP/2 监听地址提供 gRPC；代理必须以 gRPC 转发 `/ithiltir.node.v1.Node/`。这两种模式不会因鉴权或 TLS 失败降级到明文。PVE 历史还要求 root helper 常驻服务（`pve-cache`）。浏览器 API 和资产下载继续使用 HTTP。
 
 ### Windows Runner
 
@@ -86,9 +106,24 @@ Dash 管理台的 PVE 部署命令会为 Linux 安装器添加 `--pve`，安装�
 
 手动部署时，root 将 `pve-cache` 放在普通 node 无法修改的目录，准备 root 所有、运行组可读的 `/run/ithiltir-node`，以 root 服务运行 `pve-cache --group ithiltir`，由它持有基础采集、IP 慢采集及本地查询 socket。为 `node push` 设置 `ITHILTIR_NODE_PVE_SOCKET=/run/ithiltir-node/pve.sock` 后启用 VM 上报，使用 gRPC 时也启用查询会话。未设置时两项任务都不启动。`pve-cache --version` 返回与 node 相同的发布版本。Node 自更新不更新 root 采集工具。
 
+<details>
+<summary>VM 指标采样和 Guest Agent IP 采集</summary>
+
 helper 在内存中保存每台 VM 的观测结果。8 个 worker 按顺序选择到期 VM，同一 VM 不重叠查询，采样间隔至少 3 秒；单次观测超时 2 秒，完成一台即可读取一台，不等待其他 VM，也没有整轮硬截止。只有 QMP 状态为 `running` 才采集动态指标和 IP；其他 VM 保留配置与状态，模板排除。CPU 使用进程计数差值、VM vCPU 配额及宿主 CPU 数计算，不受 helper CPU 亲和性影响；内存保持 PVE cgroup/balloon 口径，磁盘和 tap 网卡字节数为累计计数。配置每 3 秒刷新，磁盘容量每 60 秒单独查询 PVE，超过 2 分钟后省略。Node 按现有 3 秒 VM 上报节奏从 helper Unix socket 读取当前快照。 PVE RRD 历史仍通过 helper 按需查询，不包含 LXC 和 VM 控制。
 
 Guest Agent IP 通过可选 `ips` 数组返回，每台 VM 最多 1024 个不重复的 IPv4/IPv6 地址，包含私网地址，排除回环、链路本地、未指定、多播及非法地址。IP 通过本机 QGA socket 独立采集，只查询 QMP 状态明确为 `running` 且启用了 Guest Agent 的 VM。调度器每 3 秒检查到期任务，最多 8 路并发，每台 VM 总超时 3 秒，每轮预算 10 秒，轮次不重叠。成功后间隔 60 秒再查，失败按 1、2、5 分钟退避；健康刷新优先，失败重试最多占用 2 个槽位。这些间隔是最小等待时间，负载饱和时查询可能推迟。VM 重启或 agent 配置变化会清除该 VM 的旧 IP 和冷却状态。helper 进程锁保证单进程运行，IP 采集循环等待当前轮次完成后再启动下一轮；仅 root 可读的 `/run/ithiltir-node/pve-guest` 状态可跨 helper 重启保留，宿主重启后重建。基础采集只读 IP 缓存，不等待 QGA。
+
+</details>
+
+## 文档
+
+[在线文档](https://www.ithiltir.dev/docs/Node)
+
+| 参考文档 | 简体中文 | English |
+| --- | --- | --- |
+| 上报接口 | [中文](docs/reporting_apis_CN.md) | [English](docs/reporting_apis.md) |
+| 本地页面 API | [中文](docs/local_page_api_CN.md) | [English](docs/local_page_api.md) |
+| 磁盘结构 | [中文](docs/api_disk_CN.md) | [English](docs/api_disk.md) |
 
 ## 构建
 
@@ -96,7 +131,7 @@ Linux 构建额外生成 `linux/pve_cache_linux_amd64` 和 `linux/pve_cache_linu
 
 构建配置在 [`.goreleaser.yaml`](.goreleaser.yaml)。Node 使用 `grpcnotrace` 构建标签，省去 gRPC 的旧追踪页面。
 
-版本格式：
+### 版本格式
 
 ```text
 MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]
@@ -107,7 +142,9 @@ MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]
 - 任何带预发布段的版本，如 `x.x.x-rc.1` 或 `x.x.x-rc.1+build`，都是 GitHub pre-release。
 - CI 会在发布前拒绝非法 SemVer tag。
 
-Linux/macOS：
+### 构建命令
+
+**Linux / macOS**
 
 ```bash
 ./scripts/build.sh --version 1.2.3-alpha.1
@@ -115,7 +152,7 @@ Linux/macOS：
 ./scripts/build.sh --use-git-tag --release
 ```
 
-Windows：
+**Windows**
 
 ```powershell
 .\scripts\build.ps1 -Version 1.2.3-alpha.1
@@ -123,7 +160,7 @@ Windows：
 .\scripts\build.ps1 -UseGitTag -Release
 ```
 
-- 输出目录：
+### 构建产物
 
 ```text
 build/
@@ -143,12 +180,6 @@ build/
 
 - GitHub Release 标题是版本 tag。node 产物是裸二进制，命名为 `Ithiltir-node-<os>-<arch>`；Windows runner 产物命名为 `Ithiltir-runner-windows-<arch>`。Windows 保留 `.exe`，checksums 单独上传
 - 脚本会在缺失时自动安装 GoReleaser `v2.17.1`
-
-## 文档
-
-- 上报接口：[English](docs/reporting_apis.md)，[中文](docs/reporting_apis_CN.md)
-- 本地页面 API：[English](docs/local_page_api.md)，[中文](docs/local_page_api_CN.md)
-- 磁盘结构：[English](docs/api_disk.md)，[中文](docs/api_disk_CN.md)
 
 ## 目录
 
@@ -171,8 +202,3 @@ build/           生成产物
 ## 许可证
 
 Ithiltir-node 使用 GNU Affero General Public License v3.0 only 授权。详见 [LICENSE](LICENSE)。
-
-
-## Node gRPC 传输
-
-为兼容已有安装，默认仍使用 HTTP。在 Node 服务环境中设置 `ITHILTIR_NODE_TRANSPORT=grpc`（仅 RPC）或 `auto`（发送报告前协商），再重启 Node。Dash 在现有 HTTP/2 监听地址提供 gRPC；代理必须以 gRPC 转发 `/ithiltir.node.v1.Node/`。这两种模式不会因鉴权或 TLS 失败降级到明文。PVE 历史还要求 root helper 常驻服务（`pve-cache`）。浏览器 API 和资产下载继续使用 HTTP。

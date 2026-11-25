@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-labelledby="title">
+  <title id="title">Ithiltir · Nightwatch</title>
+  <style>
+    @media (prefers-color-scheme: dark) {
+      .lit-stone { fill: #BC8D93; }
+      .shade { fill: #987883; }
+    }
+  </style>
+  <defs>
+    <linearGradient id="moon" gradientUnits="userSpaceOnUse" x1="73" y1="8" x2="36" y2="115">
+      <stop stop-color="#EDC88A"/>
+      <stop offset=".51" stop-color="#D99D74"/>
+      <stop offset="1" stop-color="#B77261"/>
+    </linearGradient>
+    <clipPath id="disc">
+      <circle cx="64" cy="64" r="56"/>
+    </clipPath>
+  </defs>
+  <path fill="url(#moon)" d="M82 11A56 56 0 1 0 117.7 80C102 94 79 94 61 81C41 66 39 39 55 23C62 16 71 12 82 11Z"/>
+  <g clip-path="url(#disc)">
+    <path class="lit-stone" fill="#916570" d="M43 121C52 107 58 89 60 72L61 60L53 56V50L85 43V52L79 55L78 69C76 83 82 92 98 95L123 89V127Z"/>
+    <path class="shade" fill="#614C57" d="M78 61L78 69C76 83 82 92 98 95L123 89V127H52C66 109 71 90 73 64Z"/>
+    <path fill="#F7DBA1" d="M61 55L78 51L77.5 58L60.5 62Z"/>
+  </g>
+</svg>
