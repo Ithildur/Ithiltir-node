@@ -1,9 +1,6 @@
 <div align="center">
 
-<h1>
-  <img src="docs/brandlogo.svg" width="48" height="48" align="center" alt="">
-  Ithiltir-node
-</h1>
+<h1><img src="docs/brandlogo.svg" width="48" height="48" align="center" alt="">Ithiltir-node</h1>
 
 自托管服务器监控采集器
 
